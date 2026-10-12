@@ -1,7 +1,6 @@
 {
   "schema": 1,
-  "note": "权重不打进仓库，走 Release；本文件只记录出处与校验值。下载脚本：skill/scripts/fetch_weights.py",
-  "release_asset_prefix": "w_",
+  "note": "权重不打进仓库，走 Release 下载：python skill/scripts/fetch_weights.py --from-release 42cc-hub/comfyui-agent-suite@weights-v1",
   "weights": [
     {
       "name": "m2b_face4_v3_rot60_s20261013",

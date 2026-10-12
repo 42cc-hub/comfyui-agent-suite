@@ -39,7 +39,7 @@
 ## 安装
 
 ```bash
-git clone --recursive <this-repo> comfyui_agent_suite
+git clone --recursive https://github.com/42cc-hub/comfyui-agent-suite comfyui_agent_suite
 python install.py                 # 把 skill 装到 DSH skills 目录 + 生成 config/paths.json
 python install.py --with-models   # 顺便下 SAM 与 WD14 模型（可选）
 ```
@@ -56,12 +56,31 @@ pip install -r libs/wd14-gate/requirements.txt      # 只装你要用的
 pip install -r libs/anime-detection/requirements.txt
 ```
 
+## 模型权重（Release 下载）
+
+仓库**不带权重**。11 个自训模型共 70.3 MB（人/手/脚/头检测、面部四类、局部质量分类、COCO17 骨架），
+出处、配置、指标与 sha256 都记在 `weights/manifest.json`：
+
+```bash
+python skill/scripts/fetch_weights.py --list                    # 先看清单与大小
+python skill/scripts/fetch_weights.py --from-release 42cc-hub/comfyui-agent-suite@weights-v1
+python skill/scripts/fetch_weights.py --from-dir D:/my_runs     # 自己训练完的人：按权重名找 best.pt
+```
+
+落到 `libs/anime-detection/runs/<name>/weights/best.pt`（套件脚本的默认查找路径），逐个比对 sha256：
+**校验不一致会明确告警，不静默用错权重**；拿不到就打印清单退出，让人自己下。
+
 ## 第一次跑：安装成功探针
 
 **`skill/examples/hutao_furina_two_girls.md`** —— 给一段提示词，出一张
 "胡桃 + 芙宁娜同框、且左右与靠肩方向不许反"的图：Anima 底图 → 人体定位 → 按重叠中点切两份互不重叠掩版 →
 逐人掩版重绘 → 自检。**跑通即说明安装正确**，而且这套打法（位置交给掩版、身份交给提示词/ LoRA）本身就是
 这套工具的主线思路。
+
+![探针三格：底图 → 逐人掩版重绘 → 成品](docs/images/probe_pair.jpg)
+
+左：Anima 底图（同框了，但姿势/朝向还只是"碰巧对"）；中：按检测框把两人切开、各给一份互不重叠掩版后逐人重绘；
+右：成品 —— 芙宁娜（死库水）闭眼侧躺在胡桃（水手服）膝上，胡桃看镜头。全程**没有**"把某一块贴回原图"这种合成。
 
 ## 推荐配置（作者本机，只是参考）
 
@@ -71,7 +90,8 @@ Windows + `conda` 两个环境（一个跑检测/训练：`torch`+`ultralytics`+
 
 ## 许可证与合规
 
-各组件按目录各自许可（见上表与各库 `LICENSE`）；整体组合请遵守其中最严格的 **AGPL-3.0**
-（`libs/anime-detection` 依赖 Ultralytics；闭源商用需另行获取 Ultralytics 商业许可）。
+各组件按目录各自许可（见上表与各库 `LICENSE`）：顶层 `LICENSE` 是 **MIT**，覆盖 `skill/` 与标为 MIT 的 `libs/*`；
+`libs/anime-detection` 单独是 **AGPL-3.0**。**分发包含它的整体组合时，请遵守其中最严格的那份 —— AGPL-3.0**
+（该库依赖 Ultralytics；闭源商用需另行获取 Ultralytics 商业许可）。
 本仓库**不包含任何训练数据或原图**；`libs/anime-detection` 的权重在私有数据集上训练，
 使用者自行负责其使用场景的合规性。
