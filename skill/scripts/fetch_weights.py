@@ -11,7 +11,7 @@
 用法：
     python fetch_weights.py --list
     python fetch_weights.py --from-dir D:/my_runs
-    python fetch_weights.py --from-release someone/comfyui-agent-suite@weights-v1
+    python fetch_weights.py --from-release 42cc-hub/comfyui-agent-suite@weights-v1
 """
 import argparse
 import hashlib
@@ -19,6 +19,14 @@ import io
 import json
 import os
 import sys
+
+# Windows 中文控制台默认 GBK：输出被重定向（写日志 / CI / 传管道）时，打印 ✓/✗/⚠ 会
+# UnicodeEncodeError 直接崩。把不可编码字符降级为 '?'，别让编码问题吃掉一次成功的下载。
+for _s in (sys.stdout, sys.stderr):
+    try:
+        _s.reconfigure(errors='replace')
+    except Exception:                                       # noqa: BLE001
+        pass
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 ROOT = os.path.dirname(os.path.dirname(HERE))          # <repo>/skill/scripts → <repo>
