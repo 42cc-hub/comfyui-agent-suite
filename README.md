@@ -1,97 +1,110 @@
+**English** | [中文说明](README.CN.md)
+
 # comfyui-agent-suite
 
-让 agent 学会"**用 ComfyUI 出图 / 局部重绘 / 与人协作**"的一套工具。核心是 `skill/`（agent 读的说明书 + 脚本），
-`libs/` 下是若干**可独立成库**的组件 —— 按需装，不强迫你复制作者的环境。
+Tools that teach an agent to "**generate with ComfyUI / repaint locally / collaborate with a human**".
+The core is `skill/` (the instructions + scripts an agent reads); `libs/` holds components that **stand alone as
+libraries** — install only what you need, and you don't have to replicate the author's environment.
 
-- **不含数据集、不含任何原图**；模型权重走 Release 下载。
-- **`skill/` 本体几乎没有依赖**：驱动脚本是 Node（只用内置模块），Python 侧只要 `Pillow` + `numpy`。
-- 需要"检测/抠图/闸门"这些重活时，再装对应的 `libs/*`（各自声明自己的依赖）。
+- **No datasets, no source images.** Model weights come from the Release.
+- **`skill/` itself is nearly dependency-free**: the drivers are Node (built-ins only); the Python side needs nothing but `Pillow` + `numpy`.
+- For the heavy jobs ("detection / matting / safety gate"), install the matching `libs/*` — each declares its own dependencies.
 
-## 模块成熟度（**先看这张表再用**）
+## Module maturity (**read this table before you use anything**)
 
-有些模块是打磨过的，有些还在开发中 —— 说清楚，免得你按"全都可靠"来用：
+Some modules are polished, some are still under development. Spelled out, so you don't assume "it's all reliable":
 
-| 模块 | 状态 | 说明 |
+| Module | Status | Notes |
 |---|---|---|
-| **检测（M2a 人/手/脚/头、M2b 面部四类）** | ✅ **相对可靠** | 按源图切分 + 多种子验证过；头部框尤其准（掩版的"头"就用它的**内接椭圆**） |
-| 局部质量分类（M3） | ⚠️ 可用但样本少 | 只对"结构错/糊/缺件"这类粗判可靠；缺陷样本量是瓶颈 |
-| **骨架（M1 关键点）** | ❌ **不可靠，开发中** | 一直没专门做过：关节会飘、细点（鼻/嘴）落错位置、强重叠姿态下人↔骨架配对会失败。**别用 M1 关键点推掩版**，要用检测框 |
-| **绳子（rope）** | ❌ **不可靠，开发中** | 低对比/暗场景漏检明显，正样本像素占比低导致训练信号被稀释；每轮结论见 `docs/` |
-| 人在回路画布 / 闸门 / 抠图 / 控制图 | ✅ 可用 | 见各 `libs/*/README.md` |
+| **Detection (M2a person/hand/foot/head, M2b four face classes)** | ✅ **Relatively reliable** | Validated with per-source-image splits and multiple seeds; head boxes are especially accurate (the mask's "head" is their **inscribed ellipse**) |
+| Local quality classification (M3) | ⚠️ Usable, few samples | Only coarse calls like "broken structure / blurry / missing part" are reliable; defective samples are the bottleneck |
+| **Skeleton (M1 keypoints)** | ❌ **Unreliable, WIP** | Never got a dedicated effort: joints drift, fine points (nose/mouth) land in the wrong place, and person↔skeleton pairing fails under strong overlap. **Don't derive masks from M1 keypoints** — use detection boxes |
+| **Rope** | ❌ **Unreliable, WIP** | Obvious misses in low-contrast and dark scenes; the positive-pixel ratio is so low that the training signal gets diluted. Per-round conclusions live in `docs/` |
+| Human-in-the-loop canvas / gate / matting / control maps | ✅ Usable | See each `libs/*/README.md` |
 
-**下一步要做的**（欢迎一起做）：
-1. **骨架数据集**：M1 需要一批**人工修正过**的骨架标注才能修 —— 这是当前最值得投的一块数据；
-2. 绳子模块：更难的评测集（现在留出集只有 5 张，看不出 1~2 个点的改进）+ 采样/正权侧改动；
-3. 头/手/脚的**局部重绘掩版**继续用检测框推（不依赖关键点）。
+**What's next** (contributions welcome):
+1. **Skeleton dataset**: M1 needs a batch of **human-corrected** skeleton annotations before it can be fixed — the most worthwhile data to invest in right now;
+2. Rope: a harder eval set (the hold-out set is only 5 images — too small to see a 1–2 point improvement) plus sampling / positive-weight changes;
+3. Keep deriving **head/hand/foot repaint masks** from detection boxes (no keypoints needed).
 
-## 组件与依赖
+## Components and dependencies
 
-| 组件 | 作用 | 依赖 | 许可证 |
+| Component | What it does | Dependencies | License |
 |---|---|---|---|
-| `skill/` | **核心**：SKILL.md + 参考资料 + ComfyUI 驱动 + 自检/放大/小工具 | Node 18+；Python: `Pillow`,`numpy` | MIT |
-| `libs/human-canvas/` | 人在回路画布（+ 可选 Photoshop 通道、Windows 托盘提醒） | Node 18+（DSH 插件形态）；PS 可选 | MIT |
-| `libs/wd14-gate/` | 出图安全闸门（WD14 打标 / NSFW 判定 / BLOCK 的人工授权通道） | `onnxruntime`,`numpy`,`Pillow`,`pandas` | MIT（模型另有许可） |
-| `libs/sam-matting/` | 抠图 / 掩版合成（SAM 提示式分割） | `torch`,`opencv-python`,`Pillow`,`numpy` | MIT（SAM: Apache-2.0） |
-| `libs/blender-controlnet/` | Blender 生成 depth / OpenPose / 手部控制图 | Blender 3.x+（脚本用其自带 Python） | MIT |
-| `libs/comic-layout/` | 漫画分格排版与嵌字 | `Pillow` | MIT |
-| `libs/anime-detection/` | 二次元人体/部件/面部/质量检测与评估（训练+评测+推理） | `torch`,`ultralytics`,`opencv-python`,`Pillow`,`numpy`（标注 GUI 另需 `PyQt5`） | **AGPL-3.0** |
+| `skill/` | **Core**: SKILL.md + references + ComfyUI drivers + self-check / upscale / small tools | Node 18+; Python: `Pillow`, `numpy` | MIT |
+| `libs/human-canvas/` | Human-in-the-loop canvas (+ optional Photoshop channel, Windows tray notifications) | Node 18+ (as a DSH plugin); PS optional | MIT |
+| `libs/wd14-gate/` | Output safety gate (WD14 tagging / NSFW verdict / a manual approval path for BLOCK) | `onnxruntime`, `numpy`, `Pillow`, `pandas` | MIT (models licensed separately) |
+| `libs/sam-matting/` | Matting / mask composition (promptable SAM segmentation) | `torch`, `opencv-python`, `Pillow`, `numpy` | MIT (SAM: Apache-2.0) |
+| `libs/blender-controlnet/` | Blender-generated depth / OpenPose / hand control maps | Blender 3.x+ (scripts use its bundled Python) | MIT |
+| `libs/comic-layout/` | Comic panel layout and lettering | `Pillow` | MIT |
+| `libs/anime-detection/` | Anime body / part / face / quality detection and evaluation (train + eval + inference) | `torch`, `ultralytics`, `opencv-python`, `Pillow`, `numpy` (the labeling GUI also needs `PyQt5`) | **AGPL-3.0** |
 
-## 安装
+## Install
 
 ```bash
 git clone --recursive https://github.com/42cc-hub/comfyui-agent-suite comfyui_agent_suite
-python install.py                 # 把 skill 装到 DSH skills 目录 + 生成 config/paths.json
-python install.py --with-models   # 顺便下 SAM 与 WD14 模型（可选）
+python install.py                 # installs the skill into the DSH skills dir + writes config/paths.json
+python install.py --with-models   # also fetch the SAM and WD14 models (optional)
 ```
 
-`install.py` 只做四件事：装 skill（`--dest` 可改，默认 `~/.dsh/skills/comfyui-image-generation`）、
-生成 `config/paths.json`（子库绝对路径 + ComfyUI 地址）、按需下模型、打印自检命令。
-**密钥不进仓库**：`config/keys.example.json` 是模板，复制成 `keys.json` 后填（已在 `.gitignore` 里）。
+`install.py` does exactly four things: install the skill (`--dest` to change it; defaults to
+`~/.dsh/skills/comfyui-image-generation`), write `config/paths.json` (absolute paths to the sub-libraries plus the
+ComfyUI address), fetch models on demand, and print self-check commands.
+**Keys never enter the repo**: `config/keys.example.json` is a template — copy it to `keys.json` and fill it in
+(it is already in `.gitignore`).
 
-子库的依赖按需装：
+Install sub-library dependencies only as needed:
 
 ```bash
-pip install -r requirements.txt                     # skill 本体（Pillow / numpy）
-pip install -r libs/wd14-gate/requirements.txt      # 只装你要用的
+pip install -r requirements.txt                     # the skill itself (Pillow / numpy)
+pip install -r libs/wd14-gate/requirements.txt      # only what you actually use
 pip install -r libs/anime-detection/requirements.txt
 ```
 
-## 模型权重（Release 下载）
+## Model weights (Release download)
 
-仓库**不带权重**。11 个自训模型共 70.3 MB（人/手/脚/头检测、面部四类、局部质量分类、COCO17 骨架），
-出处、配置、指标与 sha256 都记在 `weights/manifest.json`：
+The repo **ships no weights**. 11 self-trained models, 70.3 MB in total (person/hand/foot/head detection, four
+face classes, local quality classification, COCO17 skeleton). Provenance, config, metrics and sha256 all live in
+`weights/manifest.json`:
 
 ```bash
-python skill/scripts/fetch_weights.py --list                    # 先看清单与大小
+python skill/scripts/fetch_weights.py --list                    # see the manifest and sizes first
 python skill/scripts/fetch_weights.py --from-release 42cc-hub/comfyui-agent-suite@weights-v1
-python skill/scripts/fetch_weights.py --from-dir D:/my_runs     # 自己训练完的人：按权重名找 best.pt
+python skill/scripts/fetch_weights.py --from-dir D:/my_runs     # if you trained your own: find best.pt by weight name
 ```
 
-落到 `libs/anime-detection/runs/<name>/weights/best.pt`（套件脚本的默认查找路径），逐个比对 sha256：
-**校验不一致会明确告警，不静默用错权重**；拿不到就打印清单退出，让人自己下。
+They land in `libs/anime-detection/runs/<name>/weights/best.pt` (the default lookup path for the suite's scripts)
+and every file is checked against its sha256: **a mismatch is reported loudly, never silently used**; if something
+can't be fetched, the script prints the manifest and exits instead of failing quietly.
 
-## 第一次跑：安装成功探针
+## First run: the install-succeeded probe
 
-**`skill/examples/hutao_furina_two_girls.md`** —— 给一段提示词，出一张
-"胡桃 + 芙宁娜同框、且左右与靠肩方向不许反"的图：Anima 底图 → 人体定位 → 按重叠中点切两份互不重叠掩版 →
-逐人掩版重绘 → 自检。**跑通即说明安装正确**，而且这套打法（位置交给掩版、身份交给提示词/ LoRA）本身就是
-这套工具的主线思路。
+**`skill/examples/hutao_furina_two_girls.md`** — from a single prompt, produce an image where
+"Hu Tao + Furina share the frame, and left/right plus the shoulder-lean direction must not flip":
+Anima base render → body localization → split into two non-overlapping masks at the overlap midpoint →
+per-person masked repaint → self-check. **If it runs, your install is correct** — and this very approach
+(position comes from masks, identity comes from the prompt / LoRA) is the main idea behind the whole toolkit.
 
-![探针三格：底图 → 逐人掩版重绘 → 成品](docs/images/probe_pair.jpg)
+![Probe, three panels: base → per-person masked repaint → final](docs/images/probe_pair.jpg)
 
-左：Anima 底图（同框了，但姿势/朝向还只是"碰巧对"）；中：按检测框把两人切开、各给一份互不重叠掩版后逐人重绘；
-右：成品 —— 芙宁娜（死库水）闭眼侧躺在胡桃（水手服）膝上，胡桃看镜头。全程**没有**"把某一块贴回原图"这种合成。
+Left: the Anima base (they share the frame, but the pose/orientation is only "accidentally right"); middle: the two
+characters split by detection boxes, each given its own non-overlapping mask and repainted separately; right: the
+final — Furina (school swimsuit) asleep on her side on Hu Tao's (sailor uniform) lap, Hu Tao looking at the camera.
+At no point is anything **pasted back** from the original render.
 
-## 推荐配置（作者本机，只是参考）
+## Recommended setup (the author's machine, for reference only)
 
-Windows + `conda` 两个环境（一个跑检测/训练：`torch`+`ultralytics`+`segment_anything`+`opencv`+`PyQt5`；
-一个跑训练的新版 torch），Node 18+，Blender 5.x，ComfyUI 本机 7187 端口。
-**最小可用**是另一回事：只要 ComfyUI + Node + `Pillow`/`numpy`，`skill/` 的出图与重绘路线就能跑。
+Windows + two `conda` environments (one for detection/training:
+`torch`+`ultralytics`+`segment_anything`+`opencv`+`PyQt5`; one with a newer torch for training), Node 18+,
+Blender 5.x, ComfyUI on local port 7187.
+**The minimum viable setup is a different thing**: ComfyUI + Node + `Pillow`/`numpy` is enough to run the
+generation and repaint routes in `skill/`.
 
-## 许可证与合规
+## License and compliance
 
-各组件按目录各自许可（见上表与各库 `LICENSE`）：顶层 `LICENSE` 是 **MIT**，覆盖 `skill/` 与标为 MIT 的 `libs/*`；
-`libs/anime-detection` 单独是 **AGPL-3.0**。**分发包含它的整体组合时，请遵守其中最严格的那份 —— AGPL-3.0**
-（该库依赖 Ultralytics；闭源商用需另行获取 Ultralytics 商业许可）。
-本仓库**不包含任何训练数据或原图**；`libs/anime-detection` 的权重在私有数据集上训练，
-使用者自行负责其使用场景的合规性。
+Each component is licensed per directory (see the table above and each library's `LICENSE`): the top-level
+`LICENSE` is **MIT**, covering `skill/` and the `libs/*` marked MIT; `libs/anime-detection` is separately
+**AGPL-3.0**. **When you distribute a combination that includes it, comply with the strictest of those —
+AGPL-3.0** (that library depends on Ultralytics; closed-source commercial use requires a separate Ultralytics
+license). This repo contains **no training data and no source images**; the `libs/anime-detection` weights were
+trained on a private dataset, and users are responsible for the compliance of their own use case.
