@@ -1,0 +1,134 @@
+{
+  "prompt": {
+    "1": {
+      "class_type": "UNETLoader",
+      "inputs": {
+        "unet_name": "anima-base-v1.0.safetensors",
+        "weight_dtype": "default"
+      }
+    },
+    "2": {
+      "class_type": "CLIPLoader",
+      "inputs": {
+        "clip_name": "qwen_3_06b_base.safetensors",
+        "type": "stable_diffusion",
+        "device": "default"
+      }
+    },
+    "3": {
+      "class_type": "VAELoader",
+      "inputs": {
+        "vae_name": "qwen_image_vae.safetensors"
+      }
+    },
+    "4": {
+      "class_type": "CLIPTextEncode",
+      "inputs": {
+        "text": "masterpiece, best quality, score 9, score 8, newest, very aesthetic, highres, absurdres, anime illustration, illustration style, soft shading, detailed, warm colors, cinematic lighting,\n\nthe girl in this region is Hu Tao, long brown hair, twintails, red eyes, a red flower hair ornament, she looks at the viewer, she is smiling, white sailor uniform, sailor collar, pleated skirt, her hands rest on the sofa,\nanother girl is lying on her lap, only that girl's body is visible,",
+        "clip": [
+          "2",
+          0
+        ]
+      }
+    },
+    "5": {
+      "class_type": "CLIPTextEncode",
+      "inputs": {
+        "text": "hat, cap, beret, headwear,\nblue hair, blue eyes, blue streaks, school swimsuit, one-piece swimsuit,\nlowres, bad hands, extra digits, missing digits, malformed limbs, jpeg artifacts, watermark, signature, text",
+        "clip": [
+          "2",
+          0
+        ]
+      }
+    },
+    "10": {
+      "class_type": "LoadImage",
+      "inputs": {
+        "image": "dsh_ctrl/pair_base.png",
+        "upload": "image"
+      }
+    },
+    "11": {
+      "class_type": "VAEEncode",
+      "inputs": {
+        "pixels": [
+          "10",
+          0
+        ],
+        "vae": [
+          "3",
+          0
+        ]
+      }
+    },
+    "12": {
+      "class_type": "LoadImage",
+      "inputs": {
+        "image": "dsh_ctrl/mask_sitting.png",
+        "upload": "image"
+      }
+    },
+    "13": {
+      "class_type": "SetLatentNoiseMask",
+      "inputs": {
+        "samples": [
+          "11",
+          0
+        ],
+        "mask": [
+          "12",
+          1
+        ]
+      }
+    },
+    "7": {
+      "class_type": "KSampler",
+      "inputs": {
+        "seed": 77301,
+        "steps": 30,
+        "cfg": 6.0,
+        "sampler_name": "euler_ancestral",
+        "scheduler": "beta",
+        "denoise": 0.45,
+        "model": [
+          "1",
+          0
+        ],
+        "positive": [
+          "4",
+          0
+        ],
+        "negative": [
+          "5",
+          0
+        ],
+        "latent_image": [
+          "13",
+          0
+        ]
+      }
+    },
+    "8": {
+      "class_type": "VAEDecode",
+      "inputs": {
+        "samples": [
+          "7",
+          0
+        ],
+        "vae": [
+          "3",
+          0
+        ]
+      }
+    },
+    "9": {
+      "class_type": "PreviewImage",
+      "inputs": {
+        "images": [
+          "8",
+          0
+        ]
+      }
+    }
+  }
+}

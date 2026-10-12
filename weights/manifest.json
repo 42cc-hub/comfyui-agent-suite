@@ -1,0 +1,148 @@
+{
+  "schema": 1,
+  "note": "权重不打进仓库，走 Release；本文件只记录出处与校验值。下载脚本：skill/scripts/fetch_weights.py",
+  "release_asset_prefix": "w_",
+  "weights": [
+    {
+      "name": "m2b_face4_v3_rot60_s20261013",
+      "task": "m2b_face4",
+      "desc": "face4 四类面部（eye/mouth/gag/blindfold）§seed1",
+      "config": "imgsz 256 · 661 张 head · --degrees 60",
+      "metrics": {
+        "val_mAP50-95": 0.476,
+        "交付_eye": 16,
+        "交付_眼罩误报": 0,
+        "交付_gag": "5/6"
+      },
+      "file": "m2b_face4_v3_rot60_s20261013.best.pt",
+      "size": 5441818,
+      "sha256": "2a58c94d149a2dbf735fdf40c23c012caf1a92d84f147ac1e374363aed43de5f"
+    },
+    {
+      "name": "m2b_face4_v3_rot60_s20262013",
+      "task": "m2b_face4",
+      "desc": "face4 §seed2",
+      "config": "imgsz 256 · 661 张 head · --degrees 60",
+      "metrics": {
+        "val_mAP50-95": 0.475,
+        "交付_eye": 16,
+        "交付_眼罩误报": 0,
+        "交付_gag": "5/6"
+      },
+      "file": "m2b_face4_v3_rot60_s20262013.best.pt",
+      "size": 5440666,
+      "sha256": "a81c860b136a21d9bbd3b6ebe3eb29af50a5ec0eb539f7ef617050a82303e9f6"
+    },
+    {
+      "name": "m2b_face4_v3_rot60_s20263013",
+      "task": "m2b_face4",
+      "desc": "face4 §seed3（三seed里最好）",
+      "config": "imgsz 256 · 661 张 head · --degrees 60",
+      "metrics": {
+        "val_mAP50-95": 0.487,
+        "交付_eye": 16,
+        "交付_眼罩误报": 0,
+        "交付_gag": "6/6"
+      },
+      "file": "m2b_face4_v3_rot60_s20263013.best.pt",
+      "size": 5441818,
+      "sha256": "7207ef9104ef4bc45179c1d118f7b29c5ecb7eac202b1305ea2bc513559bfbeb"
+    },
+    {
+      "name": "m3_clean_v1_s20261010",
+      "task": "m3_quality",
+      "desc": "局部质量分类 §seed1",
+      "config": "无泄漏数据集 · imgsz 224",
+      "metrics": {
+        "note": "与另两个 seed 取并集使用；OOF 见 docs/runs.md"
+      },
+      "file": "m3_clean_v1_s20261010.best.pt",
+      "size": 3187778,
+      "sha256": "aa493b30cf09e3172c0f346a68869a009232b4e771890f460cc414b310eb9b9b"
+    },
+    {
+      "name": "m3_clean_v1_s20262010",
+      "task": "m3_quality",
+      "desc": "局部质量分类 §seed2",
+      "config": "无泄漏数据集 · imgsz 224",
+      "metrics": {
+        "note": "并集成员"
+      },
+      "file": "m3_clean_v1_s20262010.best.pt",
+      "size": 3187714,
+      "sha256": "db2877b5fcf7a95796fe41350979ce2e56f2ed06060060bf73d88987e46d19d3"
+    },
+    {
+      "name": "m3_clean_v1_s20263010",
+      "task": "m3_quality",
+      "desc": "局部质量分类 §seed3",
+      "config": "无泄漏数据集 · imgsz 224",
+      "metrics": {
+        "note": "并集成员"
+      },
+      "file": "m3_clean_v1_s20263010.best.pt",
+      "size": 3187906,
+      "sha256": "9544b73a34ed7ac34d99e65aaa5e925e18197b4d3c7bc43e9f943b0d29a2de3c"
+    },
+    {
+      "name": "m2a_det_996img_960",
+      "task": "m2a_det",
+      "desc": "人/头/部件检测（locate.py 主检测器）",
+      "config": "imgsz 960",
+      "metrics": {
+        "note": "M2a 主干"
+      },
+      "file": "m2a_det_996img_960.best.pt",
+      "size": 5494106,
+      "sha256": "911512acb17f0eea0ea2316002a3cc7dba0b0d5cd5a320209eace3663caa2aee"
+    },
+    {
+      "name": "m2a_hand_v2",
+      "task": "m2a_hand",
+      "desc": "手部专用检测（与主检测器取并集，召回 +）",
+      "config": "imgsz 960",
+      "metrics": {
+        "note": "可选：交付图 4/8→6/8，代价是 flag 数上升"
+      },
+      "file": "m2a_hand_v2.best.pt",
+      "size": 5500698,
+      "sha256": "807d605ccdb1cf127e6ef622165c3a7ddf56799d0743c943ca87db335c452ef0"
+    },
+    {
+      "name": "m2a_foot_v1",
+      "task": "m2a_foot",
+      "desc": "脚部专用检测",
+      "config": "imgsz 960",
+      "metrics": {
+        "note": "与主检测器并集"
+      },
+      "file": "m2a_foot_v1.best.pt",
+      "size": 21288611,
+      "sha256": "9cdfe9ec4df6307b965042eebebe04d1ffd74b5a7ac42a5cf56e97ceb6ffa759"
+    },
+    {
+      "name": "m1_pose_coco17_v5",
+      "task": "m1_pose",
+      "desc": "COCO17 关键点",
+      "config": "imgsz 640/960",
+      "metrics": {
+        "note": "骨架与姿势误差量化"
+      },
+      "file": "m1_pose_coco17_v5.best.pt",
+      "size": 6081736,
+      "sha256": "278dd63354a7b0e249619ef5420c3233d2730833e7da207c8549ee706f2e9198"
+    },
+    {
+      "name": "m1_pose17_1129",
+      "task": "m1_pose",
+      "desc": "COCO17 关键点（第二权重，并集/投票）",
+      "config": "imgsz 640/960",
+      "metrics": {
+        "note": "与上者并集"
+      },
+      "file": "m1_pose17_1129.best.pt",
+      "size": 6063240,
+      "sha256": "9638f881b7a68ea58351e4164749a3e9196d5d77cb24c3d8820ef53cc88afe62"
+    }
+  ]
+}

@@ -1,0 +1,9 @@
+# libs/anime-detection —— 检测/训练/评测
+# torch 按你的环境选版本；ultralytics 是 AGPL-3.0（见本库 LICENSE）
+torch>=2.0
+ultralytics>=8.3
+opencv-python>=4.8
+Pillow>=10.0
+numpy>=1.24
+# 只用标注 GUI（label_face.py / label_cls.py）时才需要；PyQt5 是 GPL，注意你的分发方式
+# PyQt5

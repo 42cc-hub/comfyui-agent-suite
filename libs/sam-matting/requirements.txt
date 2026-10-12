@@ -1,0 +1,8 @@
+# libs/sam-matting —— 抠图 / 掩版
+# torch 请按你的 CUDA/CPU 环境自行选版本（https://pytorch.org/get-started/locally/）
+torch>=2.0
+opencv-python>=4.8
+Pillow>=10.0
+numpy>=1.24
+# 使用 sam_object_mask.py 时需要（`pip install git+https://github.com/facebookresearch/segment-anything.git`）
+# segment-anything

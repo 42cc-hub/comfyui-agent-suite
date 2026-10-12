@@ -1,0 +1,10 @@
+{
+  "_comment": "复制成 paths.json；也可用同名环境变量覆盖（环境变量优先）",
+  "COMFYUI_BASE": "http://127.0.0.1:8188",
+  "ANIME_DET_SUITE": "../libs/anime-detection",
+  "WD14_GATE": "../libs/wd14-gate/scripts",
+  "SAM_MATTING": "../libs/sam-matting/scripts",
+  "BLENDER_CONTROLNET": "../libs/blender-controlnet/scripts",
+  "SAM_CKPT": "models/sams/sam_vit_b_01ec64.pth",
+  "WD14_MODEL_DIR": "../libs/wd14-gate/models"
+}

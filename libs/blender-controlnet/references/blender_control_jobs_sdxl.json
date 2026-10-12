@@ -1,0 +1,46 @@
+{
+  "pipeline": "sdxl",
+  "base": "Illustrious\\anime\\waiIllustriousSDXL_v170.safetensors",
+  "outDir": "gen_sdxl_depth",
+  "jobs": [
+    {
+      "id": "s1_stand_hip_depth",
+      "seed": 20260101,
+      "width": 832,
+      "height": 1216,
+      "steps": 28,
+      "cfg": 6,
+      "positive": "masterpiece, best quality, absurdres, very aesthetic, 1girl, solo, full body, standing, hand on hip, white shirt, pleated skirt, long black hair, blue eyes, looking at viewer, indoors, soft lighting, detailed background",
+      "negative": "low quality, worst quality, lowres, blurry, jpeg artifacts, bad anatomy, bad hands, extra fingers, extra limbs, cropped, signature, watermark, text, nsfw, nude, explicit",
+      "controls": [
+        { "model": "noob_sdxl_controlnet_depth.safetensors", "image": "out/s1_stand_hip_depth.png", "strength": 0.8 }
+      ]
+    },
+    {
+      "id": "s2_sit_lean_depth",
+      "seed": 20260102,
+      "width": 832,
+      "height": 1216,
+      "steps": 28,
+      "cfg": 6,
+      "positive": "masterpiece, best quality, absurdres, very aesthetic, 1girl, solo, full body, sitting on a box, leaning forward, hands on knees, oversized hoodie, shorts, long black hair, brown eyes, looking at viewer, indoors, dramatic lighting, detailed background",
+      "negative": "low quality, worst quality, lowres, blurry, jpeg artifacts, bad anatomy, bad hands, extra fingers, extra limbs, cropped, signature, watermark, text, nsfw, nude, explicit",
+      "controls": [
+        { "model": "noob_sdxl_controlnet_depth.safetensors", "image": "out/s2_sit_lean_depth.png", "strength": 0.8 }
+      ]
+    },
+    {
+      "id": "s3_lowangle_reach_depth",
+      "seed": 20260103,
+      "width": 832,
+      "height": 1216,
+      "steps": 28,
+      "cfg": 6,
+      "positive": "masterpiece, best quality, absurdres, very aesthetic, 1girl, solo, full body, dynamic pose, reaching up, arm extended, low angle, looking up, ponytail, tank top, jeans, dramatic perspective, dramatic lighting, detailed background",
+      "negative": "low quality, worst quality, lowres, blurry, jpeg artifacts, bad anatomy, bad hands, extra fingers, extra limbs, cropped, signature, watermark, text, nsfw, nude, explicit",
+      "controls": [
+        { "model": "noob_sdxl_controlnet_depth.safetensors", "image": "out/s3_lowangle_reach_depth.png", "strength": 0.8 }
+      ]
+    }
+  ]
+}

@@ -1,0 +1,6 @@
+{
+  "1": { "class_type": "UpscaleModelLoader", "inputs": { "model_name": "4x-AnimeSharp.pth" } },
+  "2": { "class_type": "LoadImage", "inputs": { "image": "dsh_edit/INPUT_IMAGE_HERE.png" } },
+  "3": { "class_type": "ImageUpscaleWithModel", "inputs": { "upscale_model": ["1", 0], "image": ["2", 0] } },
+  "4": { "class_type": "SaveImage", "inputs": { "filename_prefix": "dsh_upscaled", "images": ["3", 0] } }
+}

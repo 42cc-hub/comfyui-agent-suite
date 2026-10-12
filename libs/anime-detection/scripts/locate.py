@@ -1,0 +1,593 @@
+"""产线自检入口（M1~M3 串起来，输出统一契约 + flags + 可选蒙版）。
+
+这是整套东西**最终被产线调用的那个口**：给一批图，回答"人在哪、手/脚在哪、指/趾数量可不可疑"，
+并可选地吐出手/脚蒙版（直接喂 `SetLatentNoiseMask` 做局部重绘）。
+
+分层与降级（每层都能单独替换）：
+  M1 骨架：优先我们自己的权重（默认 `runs/m1_pose_coco17`，COCO-17 schema），缺省回落到 imgutils 的 dwpose
+  M2a 框 ：优先 `runs/m2a_det_v2_960`（person/hand/foot/head），缺省回落 imgutils 的 person/hand/head
+           **脚召回兜底**：一个脚框都没有但骨架里有踝点时，用踝点合成候选框（实测交付稿上 det 会漏脚）
+  M3 判定：WD14 先出 `state`（covered/shod ⇒ 直接 skip，不劳烦分类器）→ 二元分类器判 ok/bad
+  M4 绳子：**不在这里跑**（由 rope 模块的 `rope_predict.py` 负责）；若约定路径下已有产物则引用进来
+
+用法：
+  python scripts/locate.py --src <图|目录> --out .runtime/locate [--mask] [--imgsz 1280] [--conf 0.3]
+
+⚠️ 产线权重不是"val 上最好的那个"：v5 在 val 上关键点 0.457 > v4 的 0.349，但在**真实交付图（2000px）**上
+   v4@1280 能 7/8 检出人、v5@1280 只有 5/8 ⇒ **交付图上的表现才是选权重的依据**（2026-10-11 实测）。
+"""
+import argparse
+import io
+import json
+import os
+import sys
+
+os.environ.setdefault('HF_HUB_DISABLE_XET', '1')
+os.environ.setdefault('HF_HUB_DISABLE_SYMLINKS_WARNING', '1')
+
+import numpy as np
+from PIL import Image, ImageDraw
+
+HERE = os.path.dirname(os.path.abspath(__file__))
+PROJ = os.path.dirname(HERE)
+sys.path.insert(0, HERE)
+sys.path.insert(0, r"<你的用户目录>\.dsh\skills\comfyui-image-generation\scripts")
+
+from export_labels import COCO17_NAMES                            # noqa: E402
+
+# 点名字表内联在这里：locate.py 是产线入口，不该为了几个常量去 import 预标注脚本
+# （`prelabel_batch` 顶层就 import imgutils ⇒ 在没装 imgutils 的环境会直接崩，2026-10-11 实测踩到）
+BODY18 = ['nose', 'neck', 'r_shoulder', 'r_elbow', 'r_wrist', 'l_shoulder', 'l_elbow', 'l_wrist',
+          'r_hip', 'r_knee', 'r_ankle', 'l_hip', 'l_knee', 'l_ankle', 'r_eye', 'r_ear', 'l_eye', 'l_ear']
+HAND21 = ['wrist', 'thumb_cmc', 'thumb_mcp', 'thumb_ip', 'thumb_tip',
+          'index_mcp', 'index_pip', 'index_dip', 'index_tip',
+          'middle_mcp', 'middle_pip', 'middle_dip', 'middle_tip',
+          'ring_mcp', 'ring_pip', 'ring_dip', 'ring_tip',
+          'pinky_mcp', 'pinky_pip', 'pinky_dip', 'pinky_tip']
+FOOT3 = ['ankle', 'big_toe', 'small_toe']
+
+
+def vis_of(score):
+    return 2 if score >= 0.5 else (1 if score >= 0.3 else 0)
+
+
+DEF_POSE = [os.path.join(PROJ, 'runs', 'm1_pose_coco17', 'weights', 'best.pt'),
+            os.path.join(PROJ, 'runs', 'm1_pose17_1129', 'weights', 'best.pt')]
+# v4：val 关键点 0.349，交付图漏 test6；新版：val 0.835，交付图漏 test5 ⇒ **两个都保留、按"检出人多的"取优**
+DEF_DET = os.path.join(PROJ, 'runs', 'm2a_det_996img_960', 'weights', 'best.pt')
+# 996 张版（2.46h；**确认训练进程退出后**才敢验收）：person 0.984 / hand 0.914 / foot 0.694 / head 0.978
+# 308 张版是 0.882 / 0.750 / 0.577 / 0.899 ⇒ 数据翻 3 倍的收益
+DEF_M3 = [os.path.join(PROJ, 'runs', 'm3_cls_aug_v1', 'weights', 'best.pt'),
+          os.path.join(PROJ, 'runs', 'm3_review_v1', 'weights', 'best.pt')]
+# 两个 M3 **都跑、任一报警就算可疑**（recall 优先，符合"宁可多报交人看"）：
+#  · `m3_cls_aug_v1`：只用 182 条"数量/形状"标签 + 增强扩充 —— 交付图上**报出 3/4 已知缺陷**
+#  · `m3_review_v1` ：含用户新判的 200 张（多出 92 张"不是手脚"）—— val 更"大"，但**交付图反而只报 1 张**
+#   （又一次 val≠交付图；两个一起用可以兼顾"数量错"和"不是手脚"两类）
+DEF_FOOT = os.path.join(PROJ, 'runs', 'm2a_foot_v1', 'weights', 'best.pt')   # 专用脚（单类），与 4 类取并集
+DEF_FACE = os.path.join(PROJ, 'runs', 'm2b_face_v3_3983', 'weights', 'best.pt')  # M2b：256 固定画布，val mAP50 0.993
+DEF_GAG = [os.path.join(PROJ, 'runs', 'm2b_gag_v2', 'weights', 'best.pt'),   # 289 head：gag 交付图 4/6
+           os.path.join(PROJ, 'runs', 'm2b_gag_v4', 'weights', 'best.pt')]   # 580 head：blindfold 变可信
+# 两个都跑、任一报出就算（老办法：不同权重的错误分布不同 ⇒ 取并集补召回）
+#   v2（289 head / 195 框）：交付图 gag 02/03/04/07；blindfold 弱（53 框）
+#   v4（580 head / 415 框，含 pixiv 眼罩 176 框）：blindfold val mAP50 0.967、训练集外报出率翻倍；
+#                                                    代价是 gag 略退（交付图掉 04）
+SKIP_STATES = {'covered', 'shod'}          # 穿袜/穿鞋 ⇒ 数不了趾，直接跳过（标注规范 §2.1）
+
+
+def imgs_from(src):
+    if os.path.isdir(src):
+        return [os.path.join(src, f) for f in sorted(os.listdir(src))
+                if f.lower().endswith(('.png', '.jpg', '.jpeg', '.webp'))]
+    return [src]
+
+
+def points_from_imgutils(kp, chain):
+    out = []
+    for part, names in (('body', BODY18), ('left_hand', HAND21), ('right_hand', HAND21),
+                        ('left_foot', FOOT3), ('right_foot', FOOT3)):
+        pts = getattr(kp, part, None)
+        if pts is None:
+            continue
+        a = np.asarray(pts, dtype=float)
+        if a.size == 0:
+            continue
+        if a.ndim == 1:
+            a = a.reshape(1, -1)
+        for i, row in enumerate(a):
+            sc = float(row[-1])
+            out.append({'layer': 'M1', 'chain': chain,
+                        'name': '%s.%s' % (part, names[i] if i < len(names) else i),
+                        'cls': part, 'x': round(float(row[0]), 1), 'y': round(float(row[1]), 1),
+                        'prob': round(sc, 3), 'vis': vis_of(sc)})
+    return out
+
+
+def _iou(a, b):
+    x0, y0 = max(a[0], b[0]), max(a[1], b[1])
+    x1, y1 = min(a[2], b[2]), min(a[3], b[3])
+    iw, ih = max(0.0, x1 - x0), max(0.0, y1 - y0)
+    inter = iw * ih
+    ua = (a[2] - a[0]) * (a[3] - a[1]) + (b[2] - b[0]) * (b[3] - b[1]) - inter
+    return inter / ua if ua > 0 else 0.0
+
+
+def mask_from_boxes(shape, items, grow=12):
+    m = Image.new('L', (shape[1], shape[0]), 0)
+    d = ImageDraw.Draw(m)
+    for box in items:
+        x0, y0, x1, y1 = [int(v) for v in box]
+        d.rectangle([max(0, x0 - grow), max(0, y0 - grow), min(shape[1], x1 + grow), min(shape[0], y1 + grow)],
+                    fill=255)
+    return m
+
+
+def main():
+    ap = argparse.ArgumentParser()
+    ap.add_argument('--src', nargs='+', required=True)
+    ap.add_argument('--out', required=True)
+    ap.add_argument('--pose-weights', nargs='+', default=DEF_POSE,
+                    help='可给多个 pose 权重：**取检出人多的那个**。实测 v4 漏 test6、新版漏 test5，取优后 8/8')
+    ap.add_argument('--det-weights', default=DEF_DET)
+    ap.add_argument('--foot-weights', default=DEF_FOOT,
+                    help='专用脚检测器（单类）。与 4 类模型**取并集**：实测它能把 4 类漏掉的 test1 脚找回来')
+    ap.add_argument('--hand-weights', default=None,
+                    help='专用**手**检测器（单类，可选）。与 4 类模型取并集；默认不传 = 关闭'
+                         '（`m2a_hand_v1` 未训完，不可用；`m2a_hand_v2` 训完再按交付图实测决定）')
+    ap.add_argument('--face-weights', default=DEF_FACE,
+                    help='M2b 面部组（输入是 head 裁剪的 256×256）')
+    ap.add_argument('--gag-weights', nargs='+', default=DEF_GAG,
+                    help='M2b-gag 口塞/眼罩检测器（可多个，取并集；空则关闭）')
+    ap.add_argument('--m3-foot-tight', dest='m3_foot_tight', action='store_true', default=True,
+                    help='脚再按"下 40%% + 宽 1.2×高"收紧判一次，作为并列旗标 foot_tight_check —— **默认开**：'
+                         '交付图验收从 3/4 → 4/4（08 的"趾多"只被这条报出），代价是 02/03 各多一个待复核旗标')
+    ap.add_argument('--no-m3-foot-tight', dest='m3_foot_tight', action='store_false',
+                    help='关掉上面那条收紧旗标（回到只有主判定的 3/4）')
+    ap.add_argument('--m3-foot-crop', choices=['det', 'pose'], default='det',
+                    help='M3 脚裁图口径：det=检测器框+10%%（老行为）；pose=踝/膝锚点+35%%（复现训练口径）。'
+                         '实测 pose **不能**把 08 的"趾多"救回主判定（仍只被收紧旗标报出），'
+                         '但 02/03 的误报消失：已知缺陷 3/4→3/4、主判定∪收紧 4/4→4/4、'
+                         '误报图 4/4→2/4（R42）。默认仍是 det —— 改产线默认属于契约变更，待用户拍板')
+    ap.add_argument('--m3-conf', type=float, default=0.5,
+                    help='M3 判 bad 的 p(bad) 阈值（默认 0.5 = 原来的 argmax 行为）。'
+                         '阈值扫描：并集在 0.2~0.7 区间 val 召回恒为 1.00，而池外报出率从 0.42 降到 0.35'
+                         '（`data/sweep_m3_thresh.csv`）⇒ 抬高只砍滥报、不动召回')
+    ap.add_argument('--gag-conf', type=float, default=0.5,
+                    help='M2b-gag 的置信门限。默认 0.5：交付图实测的两个误报（把束带当眼罩 0.41、'
+                         '把颈圈当口塞 0.30）都在 0.5 以下，而三个正确的球塞框是 0.65~0.86')
+    ap.add_argument('--m3-weights', nargs='+', default=DEF_M3,
+                    help='一个或多个二元/多元分类器；**任一模型的判定不是 ok 就算可疑**（recall 优先）')
+    ap.add_argument('--mask', action='store_true', help='额外导出手/脚蒙版（重绘用）')
+    ap.add_argument('--conf', type=float, default=0.3)
+    ap.add_argument('--imgsz', type=int, default=1280,
+                    help='推理分辨率；交付图 2000px 时 1280 明显好于 640（实测 7/8 vs 5/8 检出人）')
+    a = ap.parse_args()
+    os.makedirs(a.out, exist_ok=True)
+    if a.mask:
+        os.makedirs(os.path.join(a.out, 'mask'), exist_ok=True)
+
+    # ---- 延迟加载：缺哪个模型就降级到 imgutils，绝不让整条链因为一个权重缺失而挂掉 ----
+    try:
+        from ultralytics import YOLO
+    except ImportError:
+        YOLO = None
+        print('本环境没有 ultralytics ⇒ 全部走 imgutils 回落路径')
+    pose_models = []
+    if YOLO:
+        for w in ([a.pose_weights] if isinstance(a.pose_weights, str) else a.pose_weights):
+            if w and os.path.exists(w):
+                pose_models.append(YOLO(w))
+    pose_model = pose_models[0] if pose_models else None
+    det_model = YOLO(a.det_weights) if (YOLO and os.path.exists(a.det_weights)) else None
+    m3_models = []
+    if YOLO:
+        for w in ([a.m3_weights] if isinstance(a.m3_weights, str) else a.m3_weights):
+            if w and os.path.exists(w):
+                m3_models.append(YOLO(w))
+    m3_model = m3_models[0] if m3_models else None
+    foot_model = YOLO(a.foot_weights) if (YOLO and a.foot_weights and os.path.exists(a.foot_weights)) else None
+    hand_model = YOLO(a.hand_weights) if (YOLO and a.hand_weights and os.path.exists(a.hand_weights)) else None
+    face_model = YOLO(a.face_weights) if (YOLO and a.face_weights and os.path.exists(a.face_weights)) else None
+    gag_models = []
+    for _w in (a.gag_weights if isinstance(a.gag_weights, (list, tuple)) else [a.gag_weights]):
+        if YOLO and _w and os.path.exists(_w):
+            gag_models.append(YOLO(_w))
+    gag_model = gag_models[0] if gag_models else None
+    # 坑：`train.py --task det` 会把 checkpoint 的 task 存成短名 'det'，而 predict 只认 'detect'
+    for _m in (pose_model, det_model, m3_model, foot_model, face_model, hand_model):
+        if _m is not None and getattr(_m, 'task', None) == 'det':
+            _m.task = 'detect'
+
+    dwpose_estimate = None
+    if pose_model is None:
+        try:
+            from imgutils.pose import dwpose_estimate
+        except ImportError:
+            pass
+    detect_hands = detect_heads = detect_person = None
+    if det_model is None:
+        try:
+            from imgutils.detect import detect_hands, detect_heads, detect_person
+        except ImportError:
+            pass
+    tagger = None
+    state_of = None
+    try:
+        from _libs import add_lib; add_lib("wd14-gate")
+        from wd14_gate import Tagger
+        from wd14_autotag import state_of
+        tagger = Tagger()
+    except Exception as e:
+        print('WD14 不可用（state 一律 unknown）：%s' % e)
+
+    n = 0
+    for src in a.src:
+        for path in imgs_from(src):
+            name = os.path.splitext(os.path.basename(path))[0]
+            img = Image.open(path).convert('RGB')
+            w, h = img.size
+            rec = {'image': os.path.basename(path), 'size': '%dx%d' % (w, h), 'chain': [],
+                   'points': [], 'boxes': [], 'flags': []}
+
+            # ---- M1 骨架 ----
+            if pose_models:
+                # 多权重取优：跑全部，用"检出人最多"的那个（实测能把 7/8 补成 8/8）
+                best = None
+                for _pm in pose_models:
+                    _r = _pm.predict(path, conf=a.conf, imgsz=a.imgsz, verbose=False)[0]
+                    if best is None or len(_r.keypoints or []) > len(best.keypoints or []):
+                        best, best_model = _r, _pm
+                r = best
+                nk = 17
+                try:
+                    nk = int(best_model.model.yaml.get('kpt_shape', [17, 3])[0])
+                except Exception:
+                    pass
+                names_tbl = COCO17_NAMES if nk == 17 else BODY18
+                for pi, k in enumerate(r.keypoints or []):
+                    xy = k.xy[0].tolist()
+                    cf = k.conf[0].tolist()
+                    for i in range(min(len(names_tbl), len(xy))):
+                        rec['points'].append({'layer': 'M1', 'chain': 'M1#%d' % pi,
+                                              'name': 'body.%s' % names_tbl[i], 'cls': 'body',
+                                              'x': round(xy[i][0], 1), 'y': round(xy[i][1], 1),
+                                              'prob': round(float(cf[i]), 3), 'vis': vis_of(float(cf[i]))})
+                rec['chain'].append('M1.ours')
+                rec['n_people'] = len(r.keypoints or [])
+            elif dwpose_estimate is None:
+                rec['flags'].append({'type': 'pose_unavailable', 'detail': '既无我们的 pose 权重也无 imgutils'})
+                rec['n_people'] = 0
+            else:
+                try:
+                    kps = dwpose_estimate(img)
+                    rec['chain'].append('M1.imgutils')
+                    for pi, kp in enumerate(kps):
+                        rec['points'] += points_from_imgutils(kp, 'M1#%d' % pi)
+                    rec['n_people'] = len(kps)
+                except Exception as e:
+                    rec['flags'].append({'type': 'pose_error', 'detail': str(e)[:80]})
+                    rec['n_people'] = 0
+
+            # ---- M2a 身体组 ----
+            if det_model is not None:
+                r = det_model.predict(path, conf=a.conf, imgsz=a.imgsz, verbose=False)[0]
+                names = r.names
+                for b in (r.boxes or []):
+                    cls = names[int(b.cls[0])]
+                    rec['boxes'].append({'layer': 'M2a', 'cls': cls,
+                                         'box': [round(v, 1) for v in b.xyxy[0].tolist()],
+                                         'prob': round(float(b.conf[0]), 3)})
+                rec['chain'].append('M2a.ours')
+            elif detect_person is None:
+                rec['flags'].append({'type': 'det_unavailable', 'detail': '既无我们的 det 权重也无 imgutils'})
+            else:
+                for fn, cls in ((detect_person, 'person'), (detect_hands, 'hand'), (detect_heads, 'head')):
+                    try:
+                        for box, _l, c in fn(img):
+                            rec['boxes'].append({'layer': 'M2a', 'cls': cls,
+                                                 'box': [int(v) for v in box], 'prob': round(float(c), 3)})
+                    except Exception:
+                        pass
+                rec['chain'].append('M2a.imgutils')
+
+            # ---- M2b 面部组：head 框裁 256×256 再检脸/眼（尺度固定的"标准画布"）----
+            #      同一张 256 裁剪图上顺带跑 gag/blindfold 专用小检测器（M2b-gag，R36）。
+            #      为什么单独一个模型而不是并进 M2b 四类：那两类只有"目标覆盖完整"的 289 张 head 有人工标签，
+            #      并进 1462 张的 ds_face 会拿 442 张"很可能真有目标"的图当背景（R35）。
+            if (face_model is not None or gag_model is not None) and (rec['points'] or rec['boxes']):
+                heads = [b for b in rec['boxes'] if b['cls'] == 'head']
+                for hi, hb in enumerate(heads):
+                    x0, y0, x1, y1 = hb['box']
+                    pad = int(0.15 * max(x1 - x0, y1 - y0))
+                    hx0, hy0 = max(0, int(x0 - pad)), max(0, int(y0 - pad))
+                    hx1, hy1 = min(w, int(x1 + pad)), min(h, int(y1 + pad))
+                    if hx1 - hx0 < 32 or hy1 - hy0 < 32:
+                        continue
+                    crop = img.crop((hx0, hy0, hx1, hy1)).resize((256, 256), Image.LANCZOS)
+                    cp = os.path.join(a.out, '_tmp_head.png')
+                    crop.save(cp)
+                    sx, sy = (hx1 - hx0) / 256.0, (hy1 - hy0) / 256.0
+                    for model, layer, tag, cf in tuple(
+                            [(m, 'M2b', 'M2b.ours', 0.25) for m in ([face_model] if face_model else [])] +
+                            [(m, 'M2b-gag', 'M2b.gag', a.gag_conf) for m in gag_models]):
+                        if model is None:
+                            continue
+                        rf = model.predict(cp, conf=cf, verbose=False)[0]
+                        for b in (rf.boxes or []):
+                            cls = rf.names[int(b.cls[0])]
+                            bx = b.xyxy[0].tolist()
+                            nb = [round(hx0 + bx[0] * sx, 1), round(hy0 + bx[1] * sy, 1),
+                                  round(hx0 + bx[2] * sx, 1), round(hy0 + bx[3] * sy, 1)]
+                            if layer == 'M2b-gag' and any(
+                                    _iou(nb, x['box']) > 0.6 for x in rec['boxes']
+                                    if x.get('layer') == 'M2b-gag' and x.get('cls') == cls):
+                                continue                       # 两个 gag 权重报了同一个目标 ⇒ 只留一个
+                            rec['boxes'].append({'layer': layer, 'cls': cls, 'box': nb,
+                                                 'prob': round(float(b.conf[0]), 3),
+                                                 'from': 'head%d_256' % hi})
+                        rec['chain'].append(tag)
+
+            # ---- 脚召回兜底（两级）----
+            hands = [b for b in rec['boxes'] if b['cls'] == 'hand']
+            feet = [b for b in rec['boxes'] if b['cls'] in ('foot', 'left_foot', 'right_foot')]
+            # ① 专用脚检测器（单类）与 4 类**取并集**：实测能补回 4 类漏掉的脚（test1）
+            if foot_model is not None:
+                try:
+                    rf = foot_model.predict(path, conf=max(0.15, a.conf - 0.15), imgsz=a.imgsz, verbose=False)[0]
+                    for b in (rf.boxes or []):
+                        nb = [round(v, 1) for v in b.xyxy[0].tolist()]
+                        if any(_iou(nb, f['box']) > 0.5 for f in feet):
+                            continue
+                        feet.append({'layer': 'M2a', 'cls': 'foot', 'box': nb,
+                                     'prob': round(float(b.conf[0]), 3), 'from': 'foot_model'})
+                        rec['chain'].append('M2a.foot_model')
+                except Exception as e:
+                    rec['flags'].append({'type': 'foot_model_error', 'detail': str(e)[:80]})
+            # ② 专用**手**检测器（单类）与 4 类取并集：与脚同理 —— 手是交付图上最弱的一环
+            #    （1280 下只有 4/8 张检到手、1600 下 5/8）。默认**关**（不传 `--hand-weights`），
+            #    因为 `runs/m2a_hand_v1` 只训到 27/150 epoch 就被中断、不可用；等 `m2a_hand_v2` 训完按实测决定。
+            if hand_model is not None:
+                try:
+                    rf = hand_model.predict(path, conf=max(0.15, a.conf - 0.15), imgsz=a.imgsz, verbose=False)[0]
+                    for b in (rf.boxes or []):
+                        nb = [round(v, 1) for v in b.xyxy[0].tolist()]
+                        if any(_iou(nb, f['box']) > 0.5 for f in hands):
+                            continue
+                        hands.append({'layer': 'M2a', 'cls': 'hand', 'box': nb,
+                                      'prob': round(float(b.conf[0]), 3), 'from': 'hand_model'})
+                        rec['chain'].append('M2a.hand_model')
+                except Exception as e:
+                    rec['flags'].append({'type': 'hand_model_error', 'detail': str(e)[:80]})
+            if not feet:
+                # 脚召回兜底：踝点优先；**踝点不可信时用"髋→膝"方向外推小腿**，把框中心落到脚趾附近
+                # （test6 那种脚底朝镜头的图，踝点置信度很低，只靠踝点会完全拿不到框）
+                hgt = max([b['box'][3] - b['box'][1] for b in rec['boxes'] if b['cls'] == 'person'],
+                          default=0) or (h * 0.5)
+                side_len = 0.28 * hgt
+                by_name = {}
+                for p in rec['points']:
+                    if p['cls'] == 'body':
+                        by_name.setdefault(p['chain'], {})[p['name'].split('.', 1)[-1]] = p
+                for chain, pts in by_name.items():
+                    for sd in ('left', 'right'):
+                        ank, knee, hip = pts.get('%s_ankle' % sd), pts.get('%s_knee' % sd), pts.get('%s_hip' % sd)
+                        cx = cy = None
+                        src, lc = None, False
+                        # 门槛放宽到"坐标存在即可"：test6 那种脚底朝镜头的图，踝/膝 prob 只有 0.05~0.25，
+                        # 用 vis>=1 会一个框都拿不到。低置信的框在 flag 里标 low_conf，交给下游按可疑处理。
+                        if ank and (ank['vis'] >= 1 or ank['prob'] >= 0.05):
+                            cx, cy, src = ank['x'], ank['y'], 'ankle:' + sd
+                            lc = ank['vis'] < 1
+                        elif knee and hip and (knee['vis'] >= 1 or knee['prob'] >= 0.05) and hip['vis'] >= 1:
+                            vx, vy = knee['x'] - hip['x'], knee['y'] - hip['y']
+                            cx, cy, src = knee['x'] + 0.9 * vx, knee['y'] + 0.9 * vy, 'knee_extrapolate:' + sd
+                            lc = knee['vis'] < 1
+                        if cx is None:
+                            continue
+                        bx = [cx - side_len / 2, cy - side_len / 2, cx + side_len / 2, cy + side_len / 2]
+                        bx = [max(0, bx[0]), max(0, bx[1]), min(w, bx[2]), min(h, bx[3])]
+                        if min(bx[2] - bx[0], bx[3] - bx[1]) < 48:
+                            continue
+                        feet.append({'layer': 'M2a', 'cls': 'foot(pose)', 'box': [round(v, 1) for v in bx],
+                                     'prob': (ank or knee)['prob'], 'from': src})
+                        rec['flags'].append({'type': 'foot_recovered_from_pose', 'how': src,
+                                             'prob': (ank or knee)['prob'], 'low_conf': lc,
+                                             'box': [round(v, 1) for v in bx]})
+
+            # ---- M3 判定：WD14 状态 → 分类器 ----
+            # 坑（2026-10-11 实测，R39）：M3 的**训练裁图**是 `prelabel_batch` 用"姿态脚点包围盒 + 0.35 外扩"
+            # 做的（紧贴脚），而这里一直用"检测器脚框 + 0.10 外扩"。同一张图同一只脚，前者的 p(bad)=1.00、
+            # 后者 0.00 —— 交付图 08 的"趾多"三个模型全判 ok 就是这个口径差造成的。
+            # `--m3-foot-crop pose` 改成用**踝/膝锚点**复现训练口径（默认 det = 老行为，先不动产线）。
+            def foot_crop_pose(bx):
+                pts_ = [p for p in rec['points'] if p.get('cls') == 'body' and p.get('vis', 0) >= 1]
+                ank = [p for p in pts_ if 'ankle' in (p.get('name') or '')]
+                kne = [p for p in pts_ if 'knee' in (p.get('name') or '')]
+                if not ank:
+                    return None
+                ccx, ccy = (bx[0] + bx[2]) / 2.0, (bx[1] + bx[3]) / 2.0
+                a = min(ank, key=lambda p: (p['x'] - ccx) ** 2 + (p['y'] - ccy) ** 2)
+                side = 'left' if 'left' in (a.get('name') or '') else 'right'
+                k = min([p for p in kne if side in (p.get('name') or '')] or [None],
+                        key=lambda p: ((p['x'] - a['x']) ** 2 + (p['y'] - a['y']) ** 2) if p else 1e9,
+                        default=None)
+                if k is not None:
+                    vx, vy = a['x'] - k['x'], a['y'] - k['y']          # 膝→踝方向 = 脚尖方向
+                    shin = max(8.0, (vx * vx + vy * vy) ** 0.5)
+                    tx, ty = a['x'] + 0.9 * vx, a['y'] + 0.9 * vy     # 再往外推 0.9 个小腿长
+                else:
+                    shin, tx, ty = max(24.0, (bx[2] - bx[0]) * 0.5), a['x'], a['y']
+                half = 0.75 * shin
+                return (min(a['x'], tx) - half, min(a['y'], ty) - half,
+                        max(a['x'], tx) + half, max(a['y'], ty) + half)
+
+            def m3_vote(_mm, path):
+                """→ (类名, top1 置信, p(bad))。判定用 p(bad) ≥ `--m3-conf`，默认 0.5 时与"看 top1 标签"等价。"""
+                res = _mm.predict(path, verbose=False)[0]
+                pr = res.probs.data.tolist()
+                bi = [i for i, n in _mm.names.items() if n == 'bad']
+                if not bi:      # 三类/多类权重（类别口径消融）：除 ok 以外都算可疑
+                    bi = [i for i, n in _mm.names.items() if n != 'ok']
+                pb = max(pr[j] for j in bi) if bi else 0.0
+                return str(_mm.names[int(res.probs.top1)]), round(float(res.probs.top1conf), 3), pb
+
+            for kind, arr in (('hand', hands), ('foot', feet)):
+                for i, b in enumerate(arr):
+                    x0, y0, x1, y1 = b['box']
+                    pad_f = 0.10
+                    if kind == 'foot' and a.m3_foot_crop == 'pose':
+                        fb = foot_crop_pose([x0, y0, x1, y1])
+                        if fb is not None:
+                            x0, y0, x1, y1 = fb
+                            pad_f = 0.35
+                    pad = int(pad_f * max(x1 - x0, y1 - y0))
+                    box = (max(0, int(x0 - pad)), max(0, int(y0 - pad)),
+                           min(w, int(x1 + pad)), min(h, int(y1 + pad)))
+                    if min(box[2] - box[0], box[3] - box[1]) < 48:
+                        continue
+                    cp = os.path.join(a.out, '_tmp_crop.png')
+                    img.crop(box).save(cp)
+                    st = 'unknown'
+                    if tagger is not None:
+                        try:
+                            _r, tags = tagger.run(cp, threshold=0.35)
+                            st = state_of('hand' if kind == 'hand' else 'left_foot', tags)
+                        except Exception:
+                            pass
+                    entry = {'type': 'part_check', 'part': kind, 'index': i + 1,
+                             'state': st, 'box': list(box), 'det_conf': b.get('prob')}
+                    # 并列信号（默认关）：R39 发现 M3 的训练裁图是"紧贴远端脚"，产线给的是"整只脚+腿"。
+                    # 收紧后再判一次，作为**额外**旗标（不动上面那条判定），代价（新增误报）显式可查。
+                    if kind == 'foot' and a.m3_foot_tight and m3_models:
+                        W0, H0 = box[2] - box[0], box[3] - box[1]
+                        ty = box[1] + 0.60 * H0
+                        w2 = 1.2 * (box[3] - ty)
+                        cx = (box[0] + box[2]) / 2.0
+                        tbox = (max(0, int(cx - w2 / 2)), max(0, int(ty)),
+                                min(w, int(cx + w2 / 2)), min(h, box[3]))
+                        if min(tbox[2] - tbox[0], tbox[3] - tbox[1]) >= 48:
+                            tcp = os.path.join(a.out, '_tmp_crop_tight.png')
+                            img.crop(tbox).save(tcp)
+                            tv, tpb = {}, {}
+                            for _mm in m3_models:
+                                _t = os.path.basename(os.path.dirname(os.path.dirname(_mm.ckpt_path or 'x')))
+                                _nm, _cf, tpb[_t] = m3_vote(_mm, tcp)
+                                tv[_t] = (_nm, _cf)
+                            tbad = {k: v for k, v in tv.items() if tpb[k] >= a.m3_conf}
+                            rec.setdefault('flags', []).append(
+                                {'type': 'foot_tight_check', 'box': list(tbox), 'votes': tv,
+                                 'verdict': ('bad' if tbad else 'ok'),
+                                 'prob': (round(tpb[list(tbad)[0]], 3) if tbad else
+                                          list(tv.values())[0][1])})
+                    if st in SKIP_STATES:
+                        entry['verdict'] = 'skip'
+                        entry['why'] = 'WD14 判 %s（数不了）' % st
+                    elif m3_models:
+                        votes, vpb = {}, {}
+                        for _mm in m3_models:
+                            _t = os.path.basename(os.path.dirname(os.path.dirname(_mm.ckpt_path or 'x')))
+                            _nm, _cf, vpb[_t] = m3_vote(_mm, cp)
+                            votes[_t] = (_nm, _cf)
+                        # **任一模型 p(bad) ≥ --m3-conf 就算可疑**（recall 优先）；默认 0.5 即原行为
+                        bad_votes = {k: v for k, v in votes.items() if vpb[k] >= a.m3_conf}
+                        entry['votes'] = votes
+                        if bad_votes:
+                            entry['verdict'] = 'bad'
+                            _k = max(bad_votes, key=lambda k: vpb[k])
+                            entry['prob'] = round(vpb[_k], 3)
+                        else:
+                            entry['verdict'] = 'ok'
+                            entry['prob'] = list(votes.values())[0][1]
+                    else:
+                        entry['verdict'] = 'unknown'
+                    rec['flags'].append(entry)
+            if not hands:
+                rec['flags'].append({'type': 'no_hand_visible'})
+            if rec.get('n_people', 0) == 0:
+                rec['flags'].append({'type': 'no_person'})
+
+            # ---- M4 绳子：只消费 rope 模块的产物（约定路径），不在这里跑它的模型 ----
+            rope_mask = os.path.join(PROJ, 'data', 'masks', 'rope', '%s_mask.png' % name)
+            if os.path.exists(rope_mask):
+                rope_conf = os.path.join(PROJ, 'data', 'masks', 'rope', '%s_conf.png' % name)
+                rec['ropes'] = {'mask': rope_mask.replace('\\', '/'),
+                                'conf': rope_conf.replace('\\', '/') if os.path.exists(rope_conf) else None,
+                                'source': 'M4(rope module)'}
+
+            if a.mask and (hands or feet):
+                mask_from_boxes((h, w), [b['box'] for b in hands + feet]).save(
+                    os.path.join(a.out, 'mask', '%s_hands_feet.png' % name))
+
+            # ---- 归属与"补出来的部位"（2026-10-13，下游做**逐人掩版重绘**提的需求）----
+            # ① 每个点/框挂 `person_id`：M1 的每条骨架链按关键点包围盒归属，
+            #    其余框按"中心落在哪个 person 框内、否则 IoU 最大"归属（-1 = 没归上）。
+            # ② `n_persons`（M2a 的 person 框数）与 `n_skeletons`（M1 链数）分开报 —— 二者本来就会不一致，
+            #    旧的 `n_people` 只是骨架数，保留不改（兼容）。
+            # ③ `boxes_all` = `boxes` ∪ 兜底补的部位（专用脚/踝点外推/专用手），每个框带 `origin`：
+            #    `det`（检测器直接给出）或 `fallback`（兜底路径补的）。`boxes` 本身**不变**（老行为）。
+            persons = [b for b in rec['boxes'] if b.get('cls') == 'person']
+            for i, p in enumerate(persons):
+                p['person_id'] = i
+
+            def _ctr(bx):
+                return ((bx[0] + bx[2]) / 2.0, (bx[1] + bx[3]) / 2.0)
+
+            def _assign(bx):
+                cx, cy = _ctr(bx)
+                for i, p in enumerate(persons):
+                    x0, y0, x1, y1 = p['box']
+                    if x0 <= cx <= x1 and y0 <= cy <= y1:
+                        return i
+                best, bi = 0.0, -1
+                for i, p in enumerate(persons):
+                    iou = _iou(list(bx), p['box'])
+                    if iou > best:
+                        best, bi = iou, i
+                return bi
+
+            chain_box = {}
+            for p in rec['points']:
+                c = p.get('chain')
+                if not c:
+                    continue
+                b = chain_box.setdefault(c, [p['x'], p['y'], p['x'], p['y']])
+                b[0], b[1] = min(b[0], p['x']), min(b[1], p['y'])
+                b[2], b[3] = max(b[2], p['x']), max(b[3], p['y'])
+            for c, b in chain_box.items():
+                pid = _assign(b)
+                for p in rec['points']:
+                    if p.get('chain') == c:
+                        p['person_id'] = pid
+
+            def _origin(b):
+                if b.get('from') in ('foot_model', 'hand_model') or str(b.get('cls', '')).endswith('(pose)'):
+                    return 'fallback'
+                return 'det'
+
+            for b in rec['boxes']:
+                if b.get('cls') != 'person':
+                    b.setdefault('person_id', _assign(b['box']))
+                b['origin'] = _origin(b)
+            extra = [b for b in (hands + feet) if id(b) not in {id(x) for x in rec['boxes']}]
+            for b in extra:
+                b.setdefault('person_id', _assign(b['box']))
+                b['origin'] = _origin(b)
+            rec['boxes_all'] = list(rec['boxes']) + extra
+            rec['n_persons'] = len(persons)
+            rec['n_skeletons'] = len(chain_box)
+
+            with io.open(os.path.join(a.out, '%s.json' % name), 'w', encoding='utf-8') as fh:
+                json.dump(rec, fh, ensure_ascii=False, indent=1)
+            nbad = sum(1 for f in rec['flags']
+                       if f.get('type') == 'part_check' and f.get('verdict') == 'bad')
+            print('[%-36s] 人=%s 手框=%d 脚框=%d 判 bad=%d  %s'
+                  % (os.path.basename(path), rec.get('n_people'), len(hands), len(feet), nbad,
+                     ','.join(sorted({f['type'] for f in rec['flags']}))), flush=True)
+            n += 1
+    tmp = os.path.join(a.out, '_tmp_crop.png')
+    if os.path.exists(tmp):
+        os.remove(tmp)
+    print('\n完成 %d 张 → %s（JSON 契约 + flags%s）' % (n, a.out, ' + mask' if a.mask else ''))
+
+
+if __name__ == '__main__':
+    main()

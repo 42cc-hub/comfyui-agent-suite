@@ -1,0 +1,5 @@
+# libs/wd14-gate —— 出图安全闸门
+onnxruntime>=1.16
+numpy>=1.24
+Pillow>=10.0
+pandas>=2.0

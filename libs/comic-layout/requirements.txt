@@ -1,0 +1,2 @@
+# libs/comic-layout —— 排版 / 嵌字
+Pillow>=10.0

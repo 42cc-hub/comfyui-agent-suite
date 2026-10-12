@@ -1,0 +1,42 @@
+{
+  "name": "@dsh-external/human-canvas",
+  "version": "0.2.0",
+  "description": "人在回路工具集：离线触达(系统通知) + human-canvas(人在画布上给粗略二维输入) + PS 驱动/人工编辑。",
+  "type": "module",
+  "main": "./lib/plugin.js",
+  "exports": {
+    ".": "./lib/plugin.js",
+    "./lib": "./lib/index.js",
+    "./package.json": "./package.json"
+  },
+  "files": [
+    "lib",
+    "cordis.patch.yml",
+    "README.md"
+  ],
+  "license": "MIT",
+  "keywords": [
+    "deepseek-harness",
+    "dsh",
+    "dsh-plugin",
+    "human-in-the-loop",
+    "annotation",
+    "mask",
+    "photoshop"
+  ],
+  "engines": {
+    "node": ">=22"
+  },
+  "scripts": {
+    "test": "node test/human-canvas/magnetic.mjs"
+  },
+  "dsh": {
+    "bundle": {
+      "patch": "./cordis.patch.yml"
+    }
+  },
+  "peerDependencies": {
+    "@deepseek-ai/dsh-tools": ">=0.0.1-rc <2",
+    "cordis": ">=4.0.0-rc <5"
+  }
+}

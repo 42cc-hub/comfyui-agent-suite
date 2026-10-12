@@ -1,0 +1,40 @@
+{
+  "pipeline": "anima",
+  "unet": "waiANIMA_v10Base10.safetensors",
+  "clip": "waiANIMA_v10Base10_txt.safetensors",
+  "clipType": "stable_diffusion",
+  "vae": "qwen_image_vae.safetensors",
+  "outDir": "gen_anima_lllite",
+  "jobs": [
+    {
+      "id": "s1_stand_hip_lllite",
+      "seed": 20260101,
+      "width": 832,
+      "height": 1216,
+      "steps": 30,
+      "cfg": 8,
+      "sampler": "euler",
+      "scheduler": "simple",
+      "positive": "masterpiece, best quality, absurdres, very aesthetic, 1girl, solo, full body, standing, hand on hip, white shirt, pleated skirt, long black hair, blue eyes, looking at viewer, indoors, soft lighting, detailed background, anime illustration",
+      "negative": "low quality, worst quality, lowres, blurry, jpeg artifacts, bad anatomy, bad hands, extra fingers, extra limbs, cropped, signature, watermark, text, nsfw, nude, naked, nipples, explicit, sexual",
+      "controls": [
+        { "model": "anima-lllite-pose-1.safetensors", "image": "out/s1_stand_hip_pose.png", "strength": 1.0 }
+      ]
+    },
+    {
+      "id": "s3_lowangle_reach_lllite",
+      "seed": 20260103,
+      "width": 832,
+      "height": 1216,
+      "steps": 30,
+      "cfg": 8,
+      "sampler": "euler",
+      "scheduler": "simple",
+      "positive": "masterpiece, best quality, absurdres, very aesthetic, 1girl, solo, full body, dynamic pose, reaching up, arm extended, low angle, looking up, ponytail, tank top, jeans, dramatic perspective, dramatic lighting, detailed background, anime illustration",
+      "negative": "low quality, worst quality, lowres, blurry, jpeg artifacts, bad anatomy, bad hands, extra fingers, extra limbs, cropped, signature, watermark, text, nsfw, nude, naked, nipples, explicit, sexual",
+      "controls": [
+        { "model": "anima-lllite-pose-1.safetensors", "image": "out/s3_lowangle_reach_pose.png", "strength": 1.0 }
+      ]
+    }
+  ]
+}

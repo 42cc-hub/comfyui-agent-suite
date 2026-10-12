@@ -1,0 +1,5 @@
+{
+  "_comment": "复制成 keys.json 再填；keys.json 已在 .gitignore 里，不会被提交",
+  "DASHSCOPE_API_KEY": "",
+  "HF_TOKEN": ""
+}

@@ -1,0 +1,11 @@
+# @dsh-external/human-canvas bundle layer.
+#
+# This is the `dsh.bundle.patch` layer of the package: when the profile's
+# `dsh.profile.bundles` lists this package, profile boot merges THIS patch into
+# the tree — one `insert` of the plugin row — so three tools get mounted:
+#   man_in_loop_notify / human_canvas / ps_edit
+# No required config: human-canvas picks a free port from 8140 and writes the
+# server state next to the tool; ps_edit uses the local Photoshop CS6 install.
+- insert:
+    - id: man-in-loop
+      name: '@dsh-external/human-canvas'

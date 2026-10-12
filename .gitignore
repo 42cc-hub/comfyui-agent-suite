@@ -1,0 +1,22 @@
+# 客制化（部署时填，不入库）
+skill/config/keys.json
+skill/config/paths.json
+*.key
+.env
+
+# 模型权重（走 Release / 下载脚本，见 skill/scripts/fetch_weights.py）
+**/models/**/*.pth
+**/models/**/*.safetensors
+**/models/**/*.onnx
+**/models/**/*.pt
+libs/**/runs/**
+libs/**/data/**
+!**/.gitkeep
+
+# 运行产物
+__pycache__/
+*.pyc
+.runtime/
+*.log
+out/
+work/

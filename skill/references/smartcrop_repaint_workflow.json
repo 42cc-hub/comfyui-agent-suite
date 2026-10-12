@@ -1,0 +1,124 @@
+{
+  "1": {
+    "class_type": "CheckpointLoaderSimple",
+    "inputs": {
+      "ckpt_name": "Illustrious\\anime\\waiIllustriousSDXL_v170.safetensors"
+    }
+  },
+  "2": {
+    "class_type": "LoraLoader",
+    "inputs": {
+      "model": ["1", 0],
+      "clip": ["1", 1],
+      "lora_name": "PUT_YOUR_LORA_HERE.safetensors",
+      "strength_model": 0.9,
+      "strength_clip": 0.9
+    }
+  },
+  "3": {
+    "class_type": "CLIPTextEncode",
+    "inputs": {
+      "text": "QUALITY_AND_SUBJECT_OF_THE_MASKED_REGION_ONLY",
+      "clip": ["2", 1]
+    }
+  },
+  "4": {
+    "class_type": "CLIPTextEncode",
+    "inputs": {
+      "text": "low quality, worst quality, lowres, blurry, jpeg artifacts, extra fingers, deformed",
+      "clip": ["2", 1]
+    }
+  },
+  "5": {
+    "class_type": "LoadImage",
+    "inputs": {
+      "image": "dsh_edit/smartcrop_base.png"
+    }
+  },
+  "6": {
+    "class_type": "LoadImage",
+    "inputs": {
+      "image": "dsh_edit/smartcrop_mask.png"
+    }
+  },
+  "7": {
+    "class_type": "ImageToMask",
+    "inputs": {
+      "image": ["6", 0],
+      "channel": "red"
+    }
+  },
+  "8": {
+    "class_type": "SmartImageCrop",
+    "inputs": {
+      "image": ["5", 0],
+      "mask": ["7", 0],
+      "resolution_mode": "Automatic",
+      "max_resolution": 1536,
+      "min_resolution": 768,
+      "manual_width": 1024,
+      "manual_height": 1024,
+      "mask_grow_pixels": 32,
+      "patch_mask_holes": true,
+      "no_mask_mode": "Bypass",
+      "force_divisibility": 8
+    }
+  },
+  "9": {
+    "class_type": "VAEEncode",
+    "inputs": {
+      "pixels": ["8", 0],
+      "vae": ["1", 2]
+    }
+  },
+  "10": {
+    "class_type": "SetLatentNoiseMask",
+    "inputs": {
+      "samples": ["9", 0],
+      "mask": ["8", 1]
+    }
+  },
+  "11": {
+    "class_type": "KSampler",
+    "inputs": {
+      "model": ["2", 0],
+      "seed": 7902,
+      "steps": 28,
+      "cfg": 6.5,
+      "sampler_name": "dpmpp_2m",
+      "scheduler": "karras",
+      "positive": ["3", 0],
+      "negative": ["4", 0],
+      "latent_image": ["10", 0],
+      "denoise": 0.45
+    }
+  },
+  "12": {
+    "class_type": "VAEDecode",
+    "inputs": {
+      "samples": ["11", 0],
+      "vae": ["1", 2]
+    }
+  },
+  "13": {
+    "class_type": "SmartImageStitcher",
+    "inputs": {
+      "original_image": ["5", 0],
+      "processed_image": ["12", 0],
+      "stitcher_info": ["8", 2],
+      "feather_pixels": 32,
+      "blend_mode": "Mask Feather",
+      "resize_full_image_output": "Restore Original Size",
+      "enable_color_match": false,
+      "color_match_amount": 0.35,
+      "mask": ["8", 1]
+    }
+  },
+  "14": {
+    "class_type": "SaveImage",
+    "inputs": {
+      "filename_prefix": "dsh_smartcrop_repaint",
+      "images": ["13", 0]
+    }
+  }
+}

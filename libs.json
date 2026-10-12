@@ -1,0 +1,66 @@
+{
+  "schema": 1,
+  "note": "子库登记表：install.py 用它生成 skill/config/paths.json；将来改用 git submodule 时也读这一份。",
+  "libs": [
+    {
+      "name": "wd14-gate",
+      "path": "libs/wd14-gate",
+      "entry": "libs/wd14-gate/scripts",
+      "env": "WD14_GATE",
+      "purpose": "出图安全闸门（WD14 打标 / NSFW 判定 / BLOCK 的人工授权通道）",
+      "license": "MIT（模型另有许可）",
+      "models": ["wd-v1-4-convnextv2-tagger-v2.onnx", "selected_tags.csv"],
+      "fetch": "python libs/wd14-gate/scripts/fetch_wd14_model.py"
+    },
+    {
+      "name": "sam-matting",
+      "path": "libs/sam-matting",
+      "entry": "libs/sam-matting/scripts",
+      "env": "SAM_MATTING",
+      "purpose": "抠图 / 掩版合成（SAM 提示式分割 + 色键 + 掩版合成 + 评分）",
+      "license": "MIT（SAM 权重 Apache-2.0）",
+      "models": ["sam_vit_b_01ec64.pth"],
+      "fetch": "python libs/sam-matting/scripts/fetch_sam.py"
+    },
+    {
+      "name": "blender-controlnet",
+      "path": "libs/blender-controlnet",
+      "entry": "libs/blender-controlnet/scripts",
+      "env": "BLENDER_CONTROLNET",
+      "purpose": "用 Blender 生成 depth / OpenPose / 手部控制图，驱动 ComfyUI 的 ControlNet / LLLite",
+      "license": "MIT",
+      "models": [],
+      "fetch": null
+    },
+    {
+      "name": "comic-layout",
+      "path": "libs/comic-layout",
+      "entry": "libs/comic-layout/scripts",
+      "env": "COMIC_LAYOUT",
+      "purpose": "漫画分格排版与嵌字",
+      "license": "MIT",
+      "models": [],
+      "fetch": null
+    },
+    {
+      "name": "anime-detection",
+      "path": "libs/anime-detection",
+      "entry": "libs/anime-detection/scripts",
+      "env": "ANIME_DET_SUITE",
+      "purpose": "二次元人体/部件/面部/质量检测与评估（M1 姿态、M2a 部件、M2b 面部四类、M3 质量、rope）",
+      "license": "AGPL-3.0（依赖 ultralytics）",
+      "models": ["自训权重 11 个（见 weights/manifest.json）"],
+      "fetch": "python skill/scripts/fetch_weights.py --from-dir <你的 runs 目录>"
+    },
+    {
+      "name": "human-canvas",
+      "path": "libs/human-canvas",
+      "entry": "libs/human-canvas",
+      "env": "HUMAN_CANVAS",
+      "purpose": "人在回路的默认交互组件（浏览器画布：粗掩版 / 骨架点；另含可选 Photoshop 通道与托盘提醒）",
+      "license": "MIT",
+      "models": [],
+      "fetch": null
+    }
+  ]
+}

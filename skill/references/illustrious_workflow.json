@@ -1,0 +1,9 @@
+{
+  "1": { "class_type": "CheckpointLoaderSimple", "inputs": { "ckpt_name": "Illustrious\\anime\\waiIllustriousSDXL_v170.safetensors" } },
+  "2": { "class_type": "CLIPTextEncode", "inputs": { "text": "masterpiece, best quality, absurdres, highly detailed, anime style, 1girl, whale girl mascot, blue hair, very long hair, wavy hair, ahoge, cetacean tail, fish tail, head fins, animal ears, white frilled dress, off-shoulder, bare shoulders, choker, blue bow, gentle smile, full body", "clip": ["1", 1] } },
+  "3": { "class_type": "CLIPTextEncode", "inputs": { "text": "low quality, worst quality, lowres, blurry, jpeg artifacts, bad anatomy, extra finger, wrong body, watermark, text, nsfw, nude, explicit, lingerie, panties, cleavage, see-through, sexual", "clip": ["1", 1] } },
+  "4": { "class_type": "EmptyLatentImage", "inputs": { "width": 1024, "height": 1024, "batch_size": 1 } },
+  "5": { "class_type": "KSampler", "inputs": { "seed": 123456789, "steps": 28, "cfg": 6, "sampler_name": "euler_ancestral", "scheduler": "karras", "denoise": 1, "model": ["1", 0], "positive": ["2", 0], "negative": ["3", 0], "latent_image": ["4", 0] } },
+  "6": { "class_type": "VAEDecode", "inputs": { "samples": ["5", 0], "vae": ["1", 2] } },
+  "7": { "class_type": "SaveImage", "inputs": { "filename_prefix": "dsh_il", "images": ["6", 0] } }
+}

@@ -1,0 +1,12 @@
+{
+  "1": { "class_type": "UNETLoader", "inputs": { "unet_name": "anima-base-v1.0.safetensors", "weight_dtype": "default" } },
+  "2": { "class_type": "CLIPLoader", "inputs": { "clip_name": "qwen_3_06b_base.safetensors", "type": "stable_diffusion", "device": "default" } },
+  "3": { "class_type": "VAELoader", "inputs": { "vae_name": "qwen_image_vae.safetensors" } },
+  "4": { "class_type": "LoraLoader", "inputs": { "model": ["1", 0], "clip": ["2", 0], "lora_name": "character\\E9B2B8E9B1BCE5A898Fix.wTK8.safetensors", "strength_model": 0.85, "strength_clip": 0.8 } },
+  "5": { "class_type": "CLIPTextEncode", "inputs": { "text": "masterpiece, best quality, absurdres, ultra detailed, highly aesthetic, 1girl, solo, deepseek whale girl mascot, blue hair, very long hair, wavy hair, ahoge, sidelocks, hair ornament, hair flower, blindfold, covered eyes, cetacean tail, fish tail, blue whale tail, fins, head fins, animal ears, white dress, frilled dress, off-shoulder dress, high-low skirt, bare shoulders, choker, frilled choker, blue bow, ribbon, arm garter, thigh strap, barefoot, cute, wholesome, gentle smile, full body", "clip": ["4", 1] } },
+  "6": { "class_type": "CLIPTextEncode", "inputs": { "text": "low quality, worst quality, lowres, blurry, pixelated, jpeg artifacts, bad art, poorly drawn, low detail, bad anatomy, extra finger, wrong body, cropped, signature, watermark, text, error, nsfw, nude, explicit, lingerie, panties, underwear, cleavage, see-through, sexual, lewd, nipples, topless", "clip": ["4", 1] } },
+  "7": { "class_type": "EmptyLatentImage", "inputs": { "width": 1024, "height": 1024, "batch_size": 1 } },
+  "8": { "class_type": "KSampler", "inputs": { "seed": 123456789, "steps": 30, "cfg": 8, "sampler_name": "euler", "scheduler": "simple", "denoise": 1, "model": ["4", 0], "positive": ["5", 0], "negative": ["6", 0], "latent_image": ["7", 0] } },
+  "9": { "class_type": "VAEDecode", "inputs": { "samples": ["8", 0], "vae": ["3", 0] } },
+  "10": { "class_type": "SaveImage", "inputs": { "filename_prefix": "dsh_anima_whale", "images": ["9", 0] } }
+}
