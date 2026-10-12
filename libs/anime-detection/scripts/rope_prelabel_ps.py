@@ -3,7 +3,7 @@
 三级（用户 2026-10-12 定的方案）：
   A 高质量  data/masks/rope/raw_ps/   人工标注（reviewed=true）→ 唯一训练真值
   B 中等质量 data/masks/rope/pre/     模型预标注(+SAM 对象级剔除) → 人只需"改几笔"再存回
-  C 无标注  H:\FILE\temple\_PIC*      半监督池，只出不进
+  C 无标注  <你的图片目录>\_PIC*      半监督池，只出不进
 B 经人检查修正 → 升格进 A（`promote`），于是"标一张图"从 5~6 分钟降到 1~2 分钟。
 
 用法：

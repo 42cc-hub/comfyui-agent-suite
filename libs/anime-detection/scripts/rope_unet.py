@@ -852,7 +852,7 @@ def main():
         return
 
     pools = (a.pool.split(',') if a.pool else
-             [os.path.join(r'H:\\FILE\\temple', d) for d in ('_PIC0', '_PIC1', '_PIC2', '_PIC3', '_PIC4')])
+             [os.path.join(r'<你的图片目录>', d) for d in ('_PIC0', '_PIC1', '_PIC2', '_PIC3', '_PIC4')])
     if a.ul_n > 0:
         print('半监督：无标注池 %d 张来自 %s' % (a.ul_n, pools), flush=True)
     summary = []

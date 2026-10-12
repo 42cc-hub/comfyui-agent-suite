@@ -10,7 +10,7 @@ Three sources, and they do **not** have equal authority:
 | tag | source | what it can prove |
 |---|---|---|
 | `[measured]` | our own A/B renders on this host — each row cost a batch of images | causality: X caused Y |
-| `[corpus]` | **536 published prompts** harvested from `H:\FILE\temple` (workflows extracted 2026-09-28/29). Raw data: `<你的 ComfyUI 项目>\experiments\prompt_organize\{wf,analysis}` | convention only: vocabulary, shape, what people actually ship. **Frequency is not efficacy** — a large share of these prompts is one shared template copied and edited (e.g. the top negative string appears 136×), so a frequent word may be tradition rather than a working trick |
+| `[corpus]` | **536 published prompts** harvested from `<你的图片目录>` (workflows extracted 2026-09-28/29). Raw data: `<你的 ComfyUI 项目>\experiments\prompt_organize\{wf,analysis}` | convention only: vocabulary, shape, what people actually ship. **Frequency is not efficacy** — a large share of these prompts is one shared template copied and edited (e.g. the top negative string appears 136×), so a frequent word may be tradition rather than a working trick |
 | `[plugin]` | local `comfyui_PromptManage` — `README.md` §「LLM 提示词生成规则」, `web/llm-templates.json`, `prompt_example/LLM_analyze_prompt.md` | the house rule set, written for IL-family tag prompts |
 
 **When `[measured]` and `[corpus]` disagree, `[measured]` wins.** The corpus is a vocabulary
@@ -537,7 +537,7 @@ Alice Thymefield from Zenless Zone Zero, with animal ears, black pantyhose, ... 
 
 ## 附录：这些数字怎么复现
 
-语料来自 `H:\FILE\temple`（**只读**，只拷副本）。脚本在
+语料来自 `<你的图片目录>`（**只读**，只拷副本）。脚本在
 `<你的 ComfyUI 项目>\experiments\prompt_organize\`：
 
 ```powershell

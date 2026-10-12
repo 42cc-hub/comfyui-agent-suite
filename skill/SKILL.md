@@ -3,7 +3,7 @@ name: comfyui-image-generation
 description: Generate images through a local ComfyUI server via its HTTP API, including the Illustrious (SDXL anime) and Anima (qwen-image) model pipelines, LoRA selection/trigger-word lookup, submit/poll/save automation, Blender-authored ControlNet/LLLite control maps (depth, OpenPose pose with hands, img2img), cutting the background out of renders or existing illustrations (local SAM matting, chroma key, or a hosted image-edit model) with measured scoring against a ground truth, and self-checking a finished render with a trained detector suite (people/hands/feet boxes, finger-and-toe count suspicion, gag/blindfold, rope mask) via `scripts/check_parts.py`. Use when rendering, iterating on, or cutting out images instead of using a hosted image API, or when a render needs its hands/feet/digits verified before delivery.
 allowed-tools: Read Write Edit Bash
 license: MIT
-compatibility: Requires a running ComfyUI server (<你的 ComfyUI 安装目录>, conda env sdenv, port 7187, NVIDIA GPU). Uses `node` (Node 18+) for the API calls; Blender 5.1 at `E:\\Program File\\blender` for the control-map pipeline; `ffmpeg` optional only if audio->image conversion is needed elsewhere. Matting additionally needs `pip install segment-anything` (small pure-Python package) and the SAM ViT-B checkpoint that ships with this skill at `models/sams/sam_vit_b_01ec64.pth`.
+compatibility: Requires a running ComfyUI server (<你的 ComfyUI 安装目录>, conda env sdenv, port 7187, NVIDIA GPU). Uses `node` (Node 18+) for the API calls; Blender 5.1 at `<你的 Blender 安装目录>` for the control-map pipeline; `ffmpeg` optional only if audio->image conversion is needed elsewhere. Matting additionally needs `pip install segment-anything` (small pure-Python package) and the SAM ViT-B checkpoint that ships with this skill at `models/sams/sam_vit_b_01ec64.pth`.
 metadata:
   version: "1.11"
   skill-author: local (machine-specific operational notes)
@@ -47,7 +47,7 @@ a picture may enter the agent's context at all.
 | Python | `python` |
 | Server base URL | `http://127.0.0.1:7187` |
 | GPU | RTX 3060 Laptop, 6 GB (vram `NORMAL_VRAM`, async offload) |
-| Blender | `E:\Program File\blender\blender.exe` (5.1, headless needs `--factory-startup`) |
+| Blender | `<你的 Blender 安装目录>\blender.exe` (5.1, headless needs `--factory-startup`) |
 | SAM (matting) | `models/sams/sam_vit_b_01ec64.pth` inside this skill + `pip install segment-anything` |
 | Upscalers | `models/upscale_models/`: `4x-AnimeSharp.pth` (**default**, best for illustration), `RealESRGAN_x4plus_anime_6B.pth`, `4xhfa2kludvaeswinir_v1.safetensors`. **`2x_AnimeJaNai_HD_V3_SuperUltraCompact.pth` was REMOVED (2026-09-25, user decision)** — it is visibly softer than the 4x models; it now sits in `<你的 ComfyUI 安装目录>\agent_work\_disabled_upscalers\` (out of ComfyUI's model list). Measured on a 2000×1368 illustration: |Laplacian| mean 6.08 / P99 86 (2x-AnimeJaNai) vs **9.56 / 160** (4x-AnimeSharp then Lanczos half). **Deliver with `4x-AnimeSharp → ImageUpscaleWithModel → Lanczos to the target width`**, never a native 2x model. |
 | Outbound network | **The shell has no direct internet.** HTTP times out; HTTPS via curl/.NET dies with `schannel: AcquireCredentialsHandle failed`. Only working path: local proxy `127.0.0.1:6132` + **Python (OpenSSL)** → scripts/fetch_url.py |
@@ -443,7 +443,7 @@ Rules distilled from the local `comfyui_PromptManage` plugin
 (`custom_nodes\comfyui_PromptManage`: `README.md` §LLM 提示词生成规则,
 `web/llm-templates.json`, `prompt_example/LLM_analyze_prompt.md`), Anima-specific
 adjustments, hard-won A/B measurements, **and a 536-prompt corpus harvested from
-`H:\FILE\temple` (2026-09-28/29)**.
+`<你的图片目录>` (2026-09-28/29)**.
 
 **写提示词时先开速查表:`references/prompt_cheatsheet.md`** —— 可抄的正向前缀（IL/Anima）、
 四套负面模板、8 条骨架模板（单人/双人 `{}` 块/容器内/悬吊/Anima）、词表（绳索按部位、
@@ -560,7 +560,7 @@ they can be stacked without contradicting each other.
 
 ```bash
 # 1. scene -> depth + clay preview + keypoints (--factory-startup is REQUIRED)
-"E:\Program File\blender\blender.exe" --background --factory-startup \
+"<你的 Blender 安装目录>\blender.exe" --background --factory-startup \
     --python libs/blender-controlnet/scripts/blender_build_scene.py -- --spec scenes.json --out out
 # 2. keypoints -> OpenPose skeleton (COCO-18 body + 2x21 hand points)
 python libs/blender-controlnet/scripts/blender_draw_openpose.py out/s1_kps.json out/s1_pose.png
@@ -572,16 +572,16 @@ node scripts/comfy_control.mjs references/blender_control_jobs_sdxl.json
 
 # 5. optional: INGEST an existing 2D skeleton instead of authoring a pose by hand
 python libs/blender-controlnet/scripts/blender_extract_kps.py ref/skeleton.png ref/target_kps.json --overlay ref/check.png
-"E:\Program File\blender\blender.exe" --background --factory-startup \
+"<你的 Blender 安装目录>\blender.exe" --background --factory-startup \
     --python libs/blender-controlnet/scripts/blender_fit_pose.py -- --target ref/target_kps.json \
     --spec scenes.json --scene s1 --out scenes_fitted.json
 python libs/blender-controlnet/scripts/blender_pose_error.py ref/target_kps.json out_fitted/fitted_kps.json
 
 # 6. multi-character tableau (+ per-character/env silhouette masks, + editable .blend)
-"E:\Program File\blender\blender.exe" --background --factory-startup \
+"<你的 Blender 安装目录>\blender.exe" --background --factory-startup \
     --python libs/blender-controlnet/scripts/blender_stage_multi.py -- --spec scenes_battle.json --out out --masks --save-blend scene.blend
 # 7. human drags camera/characters/props in the Blender GUI, Ctrl+S, then read it back
-"E:\Program File\blender\blender.exe" --background --python libs/blender-controlnet/scripts/blender_extract_blend.py -- \
+"<你的 Blender 安装目录>\blender.exe" --background --python libs/blender-controlnet/scripts/blender_extract_blend.py -- \
     --blend scene.blend --spec scenes_battle.json --out scenes_from_blend.json
 # 8. local repaint: prior mask -> GrabCut-aligned mask -> latent noise mask
 python libs/blender-controlnet/scripts/blender_make_inpaint_mask.py base.png out/s_mask_keqing.png mask_keqing.png --grow 16 --feather 6

@@ -32,7 +32,7 @@ ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 W = os.path.join(ROOT, '.runtime', 'rope_cv')
 ORIG = os.path.join(W, 'ps_work', '_orig')
 RAW = os.path.join(ROOT, 'data', 'masks', 'rope', 'raw_ps')
-POOLS = [os.path.join(r'H:\FILE\temple', d) for d in ('_PIC0', '_PIC1', '_PIC2', '_PIC3', '_PIC4')]
+POOLS = [os.path.join(r'<你的图片目录>', d) for d in ('_PIC0', '_PIC1', '_PIC2', '_PIC3', '_PIC4')]
 EXTS = ('.png', '.jpg', '.jpeg', '.webp')
 
 
@@ -292,7 +292,7 @@ def main():
     ap.add_argument('--confirm', default='', help='人确认无绳的候选编号，逗号分隔（如 12,37）')
     ap.add_argument('--batch', default='w', help='新批号前缀（默认 w）')
     ap.add_argument('--sheets-only', action='store_true', help='用已有 candidates.json 重排接触表')
-    ap.add_argument('--pool', default='', help='要筛的目录，逗号分隔（默认 H:\\FILE\\temple\\_PIC0..4）')
+    ap.add_argument('--pool', default='', help='要筛的目录，逗号分隔（默认 <你的图片目录>\\_PIC0..4）')
     ap.add_argument('--batch-mode', action='store_true', help='批量确认模式：48 张/表、格子小一点')
     a = ap.parse_args()
     if a.confirm:

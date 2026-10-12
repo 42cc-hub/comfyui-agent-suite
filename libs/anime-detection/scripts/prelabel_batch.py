@@ -37,7 +37,7 @@ PRE = os.path.join(DATA, 'prelabel')
 VIS = os.path.join(PRE, 'vis')
 CROPS = os.path.join(DATA, 'crops_todo')
 ESCAPE = r"<你的 ComfyUI 项目>\task\escape_containment_20261010\references\originals"
-TEMPLE = r"H:\FILE\temple"
+TEMPLE = r"<你的图片目录>"
 TEMPLE_POOLS = ['_PIC0', '_PIC1', '_PIC2', '_PIC3', '_PIC4']
 
 # OpenPose18 的 18 个身体点（顺序即模型输出顺序）
@@ -109,7 +109,7 @@ def main():
     ap = argparse.ArgumentParser()
     ap.add_argument('--escape', action='store_true')
     ap.add_argument('--src', nargs='*', default=None)
-    ap.add_argument('--sample', type=int, default=0, help='从 H:\\FILE\\temple 分层抽 N 张')
+    ap.add_argument('--sample', type=int, default=0, help='从 <你的图片目录> 分层抽 N 张')
     ap.add_argument('--limit', type=int, default=0)
     ap.add_argument('--no-booru', action='store_true')
     a = ap.parse_args()

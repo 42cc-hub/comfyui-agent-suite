@@ -1,6 +1,6 @@
 """把预标注结果整理成 **ultralytics 能直接吃的数据集**（图像 + 标签同目录，train/val 划分 + yaml）。
 
-为什么需要它：预标注把图像留在**来源目录**（逃出那 8 张在 pixiv 任务下、temple 的在 H:\FILE\temple），
+为什么需要它：预标注把图像留在**来源目录**（逃出那 8 张在 pixiv 任务下、temple 的在 <你的图片目录>），
 而 YOLO 训练要求 `images/<split>` 与 `labels/<split>` 成对出现 —— 这里负责**只拷贝**过去并写 yaml。
 
 划分纪律：

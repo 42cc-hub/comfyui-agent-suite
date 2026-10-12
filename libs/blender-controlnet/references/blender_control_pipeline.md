@@ -23,7 +23,7 @@ Verified end-to-end on this host (Blender 5.1 + ComfyUI 0.24 + RTX 3060 6 GB).
 
 | Thing | Value |
 |---|---|
-| Blender | `E:\Program File\blender\blender.exe` — 5.1.0, bundled Python 3.13 + numpy |
+| Blender | `<你的 Blender 安装目录>\blender.exe` — 5.1.0, bundled Python 3.13 + numpy |
 | Headless invocation | `blender.exe --background --factory-startup --python <script> -- <args>` |
 | PIL (skeleton drawing) | `python` (PIL 12.2, numpy 2.4) |
 | ComfyUI | `http://127.0.0.1:7187` (see SKILL.md for launch) |
