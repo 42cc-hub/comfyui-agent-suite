@@ -5,7 +5,7 @@ allowed-tools: Read Write Edit Bash
 license: MIT
 compatibility: Requires a running ComfyUI server (<你的 ComfyUI 安装目录>, conda env sdenv, port 7187, NVIDIA GPU). Uses `node` (Node 18+) for the API calls; Blender 5.1 at `<你的 Blender 安装目录>` for the control-map pipeline; `ffmpeg` optional only if audio->image conversion is needed elsewhere. Matting additionally needs `pip install segment-anything` (small pure-Python package) and the SAM ViT-B checkpoint that ships with this skill at `models/sams/sam_vit_b_01ec64.pth`.
 metadata:
-  version: "1.11"
+  version: "1.12"
   skill-author: local (machine-specific operational notes)
 ---
 
@@ -23,11 +23,11 @@ a picture may enter the agent's context at all.
 - You want to generate images on the local GPU (not a hosted API) from text prompts.
 - You need to apply a LoRA to a base model and want its activation/trigger tags.
 - You are iterating: change prompt / seed / LoRA weight / sampler and regenerate quickly.
-- Pose, framing or perspective must be **exact** rather than prompt-guessed → author it in Blender and feed ControlNet/LLLite (see the Blender section).
-- You need the **background removed / an alpha cutout** from a render or an existing illustration → see the matting section; difficulty differs by an order of magnitude depending on whether the image is ours (flat generated background) or someone else's (poster).
-- You need to **fix a detail only a few pixels wide** on a finished image (a shoelace, an eyelet) without disturbing the rest → SmartImageCrop + `SetLatentNoiseMask` + SmartImageStitcher; see the Upscaling section and `references/local_repaint_bigcanvas.md`.
-- The deliverable is a **comic page** — N images tiled into one image with dividers and lettering, in reading order → see the Comic page section and `references/comic_page_layout.md`.
-- The local stack is structurally weak at the task — **text inside the image** (Chinese calligraphy, signage), adding objects on top of a hand-edited base → call a **cloud** model and paste the answer back by mask: see the Cloud section and `references/cloud_edit_and_merge.md`.
+- Pose, framing or perspective must be **exact** rather than prompt-guessed → author it in Blender and feed ControlNet/LLLite (see `references/blender_control_pipeline.md`).
+- You need the **background removed / an alpha cutout** from a render or an existing illustration → see `references/matting_and_cutout.md`; difficulty differs by an order of magnitude depending on whether the image is ours (flat generated background) or someone else's (poster).
+- You need to **fix a detail only a few pixels wide** on a finished image (a shoelace, an eyelet) without disturbing the rest → SmartImageCrop + `SetLatentNoiseMask` + SmartImageStitcher; see `references/upscaling.md` and `references/local_repaint_bigcanvas.md`.
+- The deliverable is a **comic page** — N images tiled into one image with dividers and lettering, in reading order → see `references/comic_page_layout.md`.
+- The local stack is structurally weak at the task — **text inside the image** (Chinese calligraphy, signage), adding objects on top of a hand-edited base → call a **cloud** model and paste the answer back by mask: see `references/cloud_edit_and_merge.md`.
 - **A human must supply rough 2D input** (a painted mask, a few points/edges) or do real Photoshop work on this host → see the Human-in-the-loop section and `references/human_in_the_loop.md`. **When handing a file to Photoshop (`ps_edit`): ONE file per round — opening a second file while one is already open FREEZES Photoshop on this host (measured 2026-10-06; the human had to kill the process and unsaved work was lost).**
 - You must **know exactly where something is** before masking it (which pixels are the rope, where the face sits, which of two strengths is better) → see the Locating-things section and `references/grid_localization.md`. **要给某块区域做掩版时，先在四条路里选一条** —— ① 检测框（本机、免费、最常用）② 视觉模型分色（云端 ~10 秒，语义身份最清楚）③ 网格+坐标估计 ④ 画布让人涂（最稳但要人）：取舍、实测数字与命令见 **`references/localization_and_masks.md`**。
 - You need a **body-part mask without asking a human to paint one** → the local OpenPose node + `pose_keypoints.py` give per-part boxes (feet/legs/face/arms/hands/torso) and can write the mask: see the auto-localization section of `references/local_repaint_bigcanvas.md`. Reliable on standing/kneeling; **extreme poses (all fours, suspension) lose joints** → ask for a rough stroke or use `SAM3_Detect`.
@@ -35,7 +35,7 @@ a picture may enter the agent's context at all.
 - A figure is **complex** (two subjects in contact, a container/rig, a crowd, an unusual camera, a foreground foot/face) and you must decide **what to sample, what to program, what can be added later** → see the Planning section and `references/planning_and_decomposition.md`.
 - You are **starting a picture (or a set) and need the macro order** — when to sample, when to let a human edit, when to upscale, when to switch models → see the **Production pipeline** section and `references/production_pipeline.md`. It also carries the two-count disciplines: **many samples only at step 1**, and **upscaling happens more than once** because fine objects need pixels.
 - The picture has **two or more characters** and you need them to stay distinct (who is who, what each is doing, no feature bleed) → step 1 and step 4 of `references/production_pipeline.md` (wide canvas, per-character blocks, region repaint with only that character's LoRA, mask-paste when the engine changes).
-- You have a **reference illustration of an interior** and need *controlled* depth/line maps, or that image's **camera** (to place a character at the right scale), or you are compositing a character into a generated background → see the Perspective section and `references/perspective_and_scene_geometry.md`.
+- You have a **reference illustration of an interior** and need *controlled* depth/line maps, or that image's **camera** (to place a character at the right scale), or you are compositing a character into a generated background → see `references/perspective_and_scene_geometry.md`.
 - You **composited something** (a program-drawn rope/chain, a Blender part, a matted cut-out, a UI overlay) and it reads as **pasted** → see the Harmonizing section and `references/harmonization_and_embedding.md`; run `scripts/harmonize.py`.
 - You are **starting or resuming a multi-image project** (a set, a series, a client job) and need the disk/metadata discipline — what to keep, how humans and agents refer to the same picture, how to avoid a growing pile of near-duplicate helper scripts → see **`references/project_management.md`**. It is the cross-project layer: object model (Task/Scene/**Image**/Artifact/Decision/Publication), ID rules, the five retention levels, the operation primitives, GC by reachability, and the agent's default read boundary. Two rules from it are load-bearing: **default ephemeral → explicit promote**, and **one canonical implementation per operation — prefer the engine's native nodes over a new Python script** (e.g. a masked repaint pastes back with `ImageCompositeMasked`, not a hand-written merge).
 
@@ -154,55 +154,9 @@ Full playbook, measured model-capability table (IL vs Anima, shibari prior, POV/
 the account's content rules and the layered-production checklist: **`references/planning_and_decomposition.md`**.
 
 ## Recovering perspective — a human's line annotation → camera → control maps
-
-Full playbook, measured numbers and the toolchain: **`references/perspective_and_scene_geometry.md`**.
-The shape of it, in the order that matters:
-
-- **Agree the axes first.** image: x right / y down / z into the screen (`u = cx + f·X/Z`); world:
-  x forward / y left / z up (ROS); `p_cam = R(p_world − C)`; families `x`=depth, `y`=across,
-  `z`=vertical. Parameterise the rotation as a **rotation vector on a fixed baseline `R0`**, never
-  as free Euler angles (they let an optimiser report `pitch = −424°` and call it a fit).
-- **The human labels each line with its family — that is what makes a hard constraint safe.**
-  Human lines: plain L2, weight 1. Machine-detected lines: Cauchy via IRLS, dropped above ~5–12°.
-  A Cauchy loss on *human* lines lets the optimiser abandon one for free (seen: a 220 px labelled
-  line parked at a 37° residual at cost ≈ 0); and priors must weigh like a line, or f drifts to
-  the bound to buy a marginally better line fit (seen: f = 285 px, h-fov 122°).
-- **Residual** = angle between the line and the direction from its midpoint to that family's
-  projected VP. Guard the **VP-at-infinity** case (direction ⊥ optical axis) explicitly, or the
-  division by ~0 poisons the whole solve.
-- **Report observability, not just a camera**: rank + null direction of the Jacobian, and a **focal
-  sweep**. Measured: a single **wall corner** (3 lines, one per family) fits *exactly* at every
-  focal from 30° to 90° — f completely unobservable, only pitch (≈ +28°) is; **one extra line in any
-  family** pins that VP and makes f observable; two near-parallel lines of one family add almost
-  nothing (their VP is at infinity), so ask for lines that fan out.
-- **Assume the drawing is not a projection, and prove it with numbers.** In the session's
-  illustration the case's shelf-edge families imply a 48° down-pitch while the fixture verticals
-  imply ≈ 0°; with 40 detected lines the robust fit still pinned roll/pitch at the parameter bounds
-  with a 12° median residual. When the input is squishy, deliver **largest consistent subset +
-  outlier list + a per-line residual overlay** (green/yellow/red), never a forced camera.
-- **Build the scene as a wall corner** (floor `z=0`, one wall `{y=Y_L}` parallel to the aisle, one
-  `{x=X_R}` perpendicular). Take each wall's offset from the **bottom boundary of the human's paint
-  mask** (ray → floor, median of the world coordinate): 796 samples gave `Y_L=1.94 m`; the occluded
-  wall's number is biased far (12.6 m) and is **the knob**. Lines *above* the floor are not base
-  lines — assuming they lie on `z=0` gave a nonsense 45 m.
-- **Repaint the depth per painted region** from each plane's equation (and fill the character's
-  region with the background behind her); also emit a plane-id colour map — humans judge that far
-  better than grey.
-- **Pair the control model with its family.** Anima has **no depth ControlNet** (only LLLite
-  pose/scribble/inpaint; the depth `.safetensors` in that dropdown is SDXL/NoobAI). Depth →
-  **Illustrious + `noob_sdxl_controlnet_depth.safetensors`** (832×1216, strength ≈0.85, 111 s,
-  visibly better than Anima+scribble here). Control images must match the sampling canvas; stage
-  them in `input/dsh_ctrl/` and pass `dsh_ctrl/<file>` (a bare filename = HTTP 400); `LoadImage`'s
-  MASK is output index 1 and equals **1 − alpha**.
-- **Two-stage compositing must pin ONE scale anchor.** The character's pixel size comes from the
-  human's mask, the background's scale from your geometry — nothing ties them, and the session got
-  a **2.30× giant**. Fix: `d` = ray through her feet ∩ floor; `h_expect = f·H_char/d`;
-  `factor = h_expect/h_mask`; zoom the background about her feet (default) or shrink the mask, and
-  **print the factor**.
-- **Finisher**: one whole-image img2img at **denoise 0.6, no ControlNet** (30 s) removed the
-  two-stage seam and unified the lighting. Run on our composite it gave the best image *of our own
-  pipeline*; run on the reference it gave the best-looking image of the session but that is the
-  **ceiling, not a reconstruction** — at 0.6 the reference's own layout and props survive.
+人手画几条线 → 求相机 → 出控制图。三步：**先把轴定死**（图像 x 右/y 下/z 进屏，世界 x 前/y 左/z 上，
+旋转用**固定基线 R0 上的旋转向量**而不是自由欧拉角）→ 用人画的线做鲁棒拟合 → 用求出的相机出
+depth/line 控制图。完整方法与实测数字：**`references/perspective_and_scene_geometry.md`**。
 
 ## Harmonizing a composite — stop it looking pasted
 
@@ -438,448 +392,42 @@ Anima is a newer (qwen-image) pipeline. It is NOT a standard checkpoint: load th
 
 
 ## Writing the prompt — structure, negation, costume swaps
-
-Rules distilled from the local `comfyui_PromptManage` plugin
-(`custom_nodes\comfyui_PromptManage`: `README.md` §LLM 提示词生成规则,
-`web/llm-templates.json`, `prompt_example/LLM_analyze_prompt.md`), Anima-specific
-adjustments, hard-won A/B measurements, **and a 536-prompt corpus harvested from
-`<你的图片目录>` (2026-09-28/29)**.
-
-**写提示词时先开速查表:`references/prompt_cheatsheet.md`** —— 可抄的正向前缀（IL/Anima）、
-四套负面模板、8 条骨架模板（单人/双人 `{}` 块/容器内/悬吊/Anima）、词表（绳索按部位、
-口球、腿几何、状态、镜头）、if→then 规则表、参数表。**展开的规则与证据**
-（每条数字的来源、A/B 实测）：`references/prompt_writing.md`。语料统计复现：
-`experiments/prompt_organize/analyze_corpus.py` + `analyze_extra.py`
-。
-
-**硬性要求：一级用空行（`\n\n`）分区块，二级用单换行（`\n`）分要素。** JSON 里写 `\n\n` 就是
-ComfyUI 界面里的空行。理由：提示词是给人**手动改**的，人的注意力有限——2026-09-21 交付过一版把
-六组压成一行的提示词，用户当场要求返工（"人的注意力是有限的，处理不了那么多黏着的滔滔不绝的
-文本"）。语料实测：**85% 的提示词在区块内部用单换行，中位 9 行 / 4 个空行区块**，所以正确粒度是
-**行**——姿势一行、缚法一行、表情一行、服装一行；只有 4% 是一条到底。
-
-**分组顺序（经验值，来自 536 条实际提示词的平均位置）：**
-
-```
-风格/质量块  →  场景/镜头  →  主体+姿势+缚法+表情  →  角色身份+外观+服装  →（可选）风格块
-0.06–0.17      0.35–0.45      0.49–0.61               0.71–0.75
-```
-
-**角色身份块放最后三分之一**（284 条带 `名字 \(系列\)` 的提示词里平均位置 0.71，69% 落在后 1/3）。
-好处是**换角色只改一块**，不动场景和缚法。位置本身不敏感，但**同一系列内保持一致**。
-`[plugin]` 规则 4 的"质量 → 主体 → 服装 → …"是另一种排布，同样可用。
-
-**风格块是固定的、可整段复制的**：语料里 **57% 的提示词开头 18 个 tag 逐字相同**，
-即 `masterpiece, best quality, absurdres, ultra detailed, high resolution, newest, highly
-aesthetic, intricate details, professional artwork, trending on ArtStation, digital illustration,
-painterly style, soft gradient shading, professional digital painting, extreme details`
-（Anima 系换成风格 LoRA 的**触发整句** + `score_9/8/7` + `year 2025`）。
-`masterpiece, best quality, absurdres` 本身不是风格——风格在那串尾巴上。
-**风格块只写一次**；重要特征给 2–4 个同义强化词。
-
-**IL vs Anima — the one real difference:**
-
-| content | Illustrious (SDXL) | Anima (qwen-image) |
-|---|---|---|
-| scene / mood / lighting / event | tag phrases | **a sentence** (clauses, semicolons OK) |
-| constituent elements (clothing, body, props, style) | tag phrases | **comma phrases** |
-
-Mnemonic: **"what happens" in sentences, "what is there" in phrases.**
-
-**Never put negation in the positive prompt.** The text encoder does not bind `no`,
-`without`, `nothing`, `except` to the noun that follows — `no apron` reads as *apron*.
-Write the affirmative (`plain white summer dress`), and move the unwanted thing
-(`apron, navy blue maid dress, black skirt`) into the **negative** prompt. Same for
-quantitative constraints: `only the very edges, nothing in the middle` is read as
-*edges* + *middle*, so the middle gets drawn anyway. (Corpus check: only 2% of tag-style
-prompts contain `no <noun>`, so the convention agrees.)
-
-**负向是"第二块画布"，不是只放缺陷。** 语料里负向的用途分布：材质/风格纠正 55%
-（`brush, comic` 压水彩 LoRA；`flat colors, cel shaded, flat shading, hard edges, low contrast`
-锁厚涂风）、角色服装残留清除 14%、裸露压制 11%、**多人压制 10%**（单人图加 `people, person, girl`）、
-**姿势/器具压制 6%**（`hanging rope, suspension, ribbon, satin ribbon` —— `red rope` 的默认读法
-之一就是悬吊和缎带）。原则：**"这个词会带来的不想要的读法"进负向**。
-固定缺陷块也在 `references/prompt_writing.md` §2（三条可直接抄的模板）。负面同样要瘦身。
-
-**Costume / character swaps need an explicit replacement clause.** A LoRA carries its
-own outfit, and merely naming a new garment loses to it. Write
-`plain white summer dress instead of a maid outfit`, **and** put
-`navy blue maid dress, maid outfit, apron` in the negative — that combination took the
-white dress from 0/4 to 4/4. Target garment alone in the positive: swap fails.
-
-**短动作短语胜过几何描述 —— 但"拓扑"可以用句子。** `pull down the dress on crotch
-with both hand` 一次就中；一段描述"中间那块压平、外侧两角高于胯线、大腿外侧露出一条窄边"
-的段落被 8 张图全部无视。语料的修正：**绳路这种"什么连着哪里"的拓扑，句子反而更清楚**
-（14% 的语料用整句：`Her upper body is tied in shibari style by large amounts of red ropes,
-and her arms are tied behind her back.` ×7）。判据：**句子里出现相对量/像素量就停手，
-去 `references/blender_control_pipeline.md` 或遮罩。**
-
-**绳索要写部位。** 不要只写"绑住腿"：语料用 `bound ankles / bound knees / bound thighs /
-bound legs / bound arms / bound wrists / bound feet` 逐个部位写，配 `shibari, red rope,
-crotch rope, breast rope, skindentation`（绳勒进皮肤）、`shibari over clothes`（隔衣缚，
-防自动脱衣）。完整词表 + 规范/非规范写法之辨：`references/prompt_writing.md` §3。
-
-**整体缚法挑"有公认英文名的那个"** —— 14 种姿势实测（Anima，绿✅9 / 半⚠️5 / 认不出 0）：
-最好使的是 `box tie / hogtie / gyaku ebi / frogtie / strappado / crotch rope / ippon tsuri /
-human dog`，日文名单独写没有控制力。**绳的艺术编花（菱形 karada、龟甲 kikkou）出不来** ⇒ 要控制图或局部重绘；
-`suspension` 默认读作**倒吊**，要立吊写 `single rope, bound wrists above head`；`spread eagle` 只是**摆开**、没绑四角；
-双人并绑用 `bound together, back to back, ropes joined, 2girls` 一次就成。
-逐姿势 tag 表与证据：`references/prompt_cheatsheet.md` §4「整体缚法姿势」。
-
-**权重幅度跟底模走，且本管线未做 A/B。** 语料：IL 用权重时中位 **1.20**、只有 5% 到 1.5 以上；
-Anima 中位 **1.50**、**51%** 在 1.5 以上（出现 `(shibari:4.0)`）。IL 上写 `:4.0` 没有依据，
-会海报化。**先减词，再调权重。**
-
-**Check the tag's real meaning before writing it** (esp. Japanese net/fashion terms —
-在线百科 / 萌娘百科). One theme word was drawn literally as a prop for 12 images
-before the definition was checked; the correct reading was a garment silhouette. A
-wrong reading costs a whole batch.
-
-**提示词不是"越多越好"，正负都要适度 —— 写"承重的那几个"，不是写"齐全"。**（2026-09-21，用户纠正）
-
-- **机制**：词表越长，每个词的相对权重越低（词表长度本身就是稀释）。堆到几十个词之后，
-  新增的词不再增加控制力，只是把已有的词摊薄。
-- **实测（负向）**：一版把 60+ 个缺陷词塞进负向、还给鞋类词加了 `(shoes:1.45)` → 鞋子纹丝不动，
-  反而因负向过载把整张图渲染成绿/红海报化；另一版只用 20 个词、鞋类只留 `shoes, high heel`，
-  配合 `cfg 8 / 20 步` → 鞋直接消失。
-- **实测（正向）**：同一时期把角色 + 服装 + 姿势 + 表情 + 质量词全堆成一行长句的版本，
-  反而不如用户自己写的"短句 + 分组空行"版本听话（那次短版直接把鞋去掉了）。
-- **做法**：每个内容组只留**承重的那几个词**；分组空行（见本文件 §Writing the prompt 的硬性要求）
-  让你能**整组删掉而不伤别的组**。
-- **判据**：**加一个词如果没让画面可辨地改变，它就是噪声，删掉。** 先减词，再调权重 ——
-  加权是最后手段，不是第一手段。
+结构（分组、空行、否定、换装）、Anima 专属调整、A/B 实测、536 条语料统计，全部正文在
+**`references/prompt_writing.md`**；可直接抄的正向前缀、四套负面模板、8 条骨架模板与词表在
+**`references/prompt_cheatsheet.md`**。写提示词前先开速查表；固定缺陷块见 prompt_writing.md §2、
+服装词见 §3、逐姿势 tag 表见 prompt_cheatsheet.md §4。
 
 ## Blender-driven control maps — depth / pose / hands
-When pose, framing, focal length or foreshortening must be exact, build the scene
-in Blender and render control maps instead of describing it in words. Depth and
-pose maps are projected through the **same camera from the same armature**, so
-they can be stacked without contradicting each other.
+When pose, framing, focal length or foreshortening must be exact, author the scene in Blender and
+render control maps instead of describing it in words；depth 与 pose 走**同一相机、同一骨架**，可以叠。
 
-**Full workflow, scene-spec format, pitfalls and measured settings:
-`references/blender_control_pipeline.md`.**
+**入口四步**：`blender_build_scene.py`（必须 `--factory-startup`，出 depth + clay + kps）→
+`blender_draw_openpose.py` → `blender_overlay_check.py`／`blender_crop_hands.py`（**先验证骨架压在
+几何上再花 GPU**）→ `comfy_control.mjs`。另有四条二次入口：抄现成骨架、多角色摆台、人在 GUI 里改完
+读回、局部重绘（见下）。
 
-```bash
-# 1. scene -> depth + clay preview + keypoints (--factory-startup is REQUIRED)
-"<你的 Blender 安装目录>\blender.exe" --background --factory-startup \
-    --python libs/blender-controlnet/scripts/blender_build_scene.py -- --spec scenes.json --out out
-# 2. keypoints -> OpenPose skeleton (COCO-18 body + 2x21 hand points)
-python libs/blender-controlnet/scripts/blender_draw_openpose.py out/s1_kps.json out/s1_pose.png
-# 3. verify the skeleton sits on the geometry BEFORE spending GPU time
-python libs/blender-controlnet/scripts/blender_overlay_check.py out/s1_clay.png out/s1_pose.png out/s1_overlay.png
-python libs/blender-controlnet/scripts/blender_crop_hands.py s1        # hands are ~20 px; zoom before judging
-# 4. generate: ControlNet (SDXL) / LLLite (Anima) / img2img from the clay render
-node scripts/comfy_control.mjs references/blender_control_jobs_sdxl.json
-
-# 5. optional: INGEST an existing 2D skeleton instead of authoring a pose by hand
-python libs/blender-controlnet/scripts/blender_extract_kps.py ref/skeleton.png ref/target_kps.json --overlay ref/check.png
-"<你的 Blender 安装目录>\blender.exe" --background --factory-startup \
-    --python libs/blender-controlnet/scripts/blender_fit_pose.py -- --target ref/target_kps.json \
-    --spec scenes.json --scene s1 --out scenes_fitted.json
-python libs/blender-controlnet/scripts/blender_pose_error.py ref/target_kps.json out_fitted/fitted_kps.json
-
-# 6. multi-character tableau (+ per-character/env silhouette masks, + editable .blend)
-"<你的 Blender 安装目录>\blender.exe" --background --factory-startup \
-    --python libs/blender-controlnet/scripts/blender_stage_multi.py -- --spec scenes_battle.json --out out --masks --save-blend scene.blend
-# 7. human drags camera/characters/props in the Blender GUI, Ctrl+S, then read it back
-"<你的 Blender 安装目录>\blender.exe" --background --python libs/blender-controlnet/scripts/blender_extract_blend.py -- \
-    --blend scene.blend --spec scenes_battle.json --out scenes_from_blend.json
-# 8. local repaint: prior mask -> GrabCut-aligned mask -> latent noise mask
-python libs/blender-controlnet/scripts/blender_make_inpaint_mask.py base.png out/s_mask_keqing.png mask_keqing.png --grow 16 --feather 6
-node scripts/comfy_inpaint.mjs inpaint_jobs.json
-```
-
-Key facts:
-- Poses are authored as **world-space bone directions** in `scenes.json`; hands as
-  `{"L": {"curl": 0..1, "spread": 0..1}}`. Fingers are real bones (15/hand), so the
-  mesh, depth map and OpenPose hand skeleton share one pose.
-- **Multi-character** staging is `blender_stage_multi.py` (§6 of the reference):
-  N armatures, props parented to bones, per-character keypoints, and `--masks`
-  silhouettes. Hand the `.blend` to the human when hand-authored poses still read
-  wrong; `blender_extract_blend.py` reads the GUI edits back (round-trip fidelity
-  measured at max 27/255, mean 0.019). Mesh-level edits (subdivide/join) do NOT
-  survive — only object transforms do.
-- **Local repaint** beats re-rolling a whole image when one element is wrong
-  (§8): Blender silhouette → GrabCut aligned on the *generated* image → `VAEEncode`
-  + `SetLatentNoiseMask` + `KSampler(denoise)`. **Simplify the prompt outside the
-  repaint region** (reduce the other character to `1girl at right side`) or the
-  model rewrites them.
-- **Choose denoise by WHAT you are changing, not by how wrong it looks.** The band
-  names the task; a band that is too high throws away exactly the structure you
-  meant to keep. (2026-09-20: "fix the tail's scales" was run at 0.85 and the tail
-  came back detached from her hips with stray fins floating in the water — the task
-  was band 1, the pass was band 4.)
-
-  | denoise | the task it is for |
-  |---|---|
-  | **0.2 – 0.4** | fixing texture and linework |
-  | **0.5 – 0.6** | fixing proportions and expressions |
-  | **0.7** | large-scale restructuring |
-  | **0.8 – 1.0** | discarding the original structure — a fresh roll |
-
-  Two consequences that are easy to get wrong:
-
-  - **Style and colour are prompt-driven, not denoise-driven.** Keeping the prompt
-    unchanged keeps the original look at *any* band, so raising denoise to change
-    an element's material or palette just breaks its structure instead. "Make this
-    element look like X while keeping its shape" = band 1–2 **plus a prompt that
-    describes X**.
-  - Over a mask, denoise does not control *how much* changes, only whether the
-    structure survives — the masked region is repainted whole at every band
-    (`out = out * mask + latent * (1 - mask)`; see `local_repaint_bigcanvas.md`).
-- **Repairing hands / faces (the "detailer" family) — measured boundaries (2026-10-03).**
-  The community recipe is always *locate → crop → upscale ×2 → feathered mask → low-denoise
-  repaint → paste back*; what decides success is **whether the defect is a texture problem or
-  a topology problem**:
-
-  | target | defect type | what works | what does not |
-  |---|---|---|---|
-  | face | **resolution loss** (small face, was upscaled) | `denoise 0.35–0.45` — eyelashes, pupil highlights, hair strands appear; in-mask change ≈ 13–14 %, out-mask max Δ = **2** | — |
-  | face | **structure destroyed** (smudged/smeared) | nothing at this scale — even `0.55` moves only **5 %** of in-mask pixels; `0.7` only guesses at the mouth | low denoise (it faithfully reproduces "blurry") |
-  | hand | small / soft (skeleton still trustworthy) | hand-skeleton as LLLite, low denoise | — |
-  | hand | **fingers fused / six fingers** (skeleton itself wrong) | nothing reliable: `0.45–0.92` moves ≈ 23–30 % of pixels but the **detail energy goes DOWN** (it smooths, not rebuilds); `1.00` finally separates the fingers cleanly **and** grows a new hand beside her face | LLLite on the bad skeleton (it anchors the error); mid denoise (looks like it changed, is only blurring) |
-
-  Three rules that follow:
-  1. **Never measure a repaint by "how many pixels changed".** Read the *direction*: a
-     smoothing pass gives a large in-mask change with **negative** detail energy. Pair
-     `changed_pct_inside_mask` with a Laplacian-energy delta.
-  2. **A repaint has no placement constraint.** It can fix local topology but cannot know
-     *where* the hand should go; supplying a corrected skeleton/dense map is the precondition
-     for high denoise, not an optional extra.
-  3. **Paste-back cleanliness is cheap to prove**: out-mask max Δ ≈ 2 means the feathering is
-     fine and any remaining artifact is inside the mask. Report it with every repair.
-- **Character replacement without a face-swap model** (`swapchar.py`): HED edge map →
-  `ControlNetApplyAdvanced` (softedge_hed, 0.9) + **grayscale** base at img2img `denoise 0.8`
-  + character LoRA 0.85 keeps pose / rope topology / framing and swaps identity, hair and
-  outfit. Prove it is the LoRA and not a re-roll by running the **same seed with the original
-  character's LoRA** as a control — the control must reproduce the original character.
-  (See also the §"云 API" note: never hand the model the original colours if the outfit must change.)
-- **True identity transfer needs FaceID, and FaceID needs two weight sets that are NOT on this
-  host** (checked 2026-10-03). Do not reach for plain IPAdapter and call it identity transfer:
-  `ip-adapter-plus-face_sdxl_vit-h` is a **CLIP-vision image prompt**, so it changes face shape
-  and eye shape but does **not** carry the reference's hair or iris colour, and at
-  `weight 1.0` it destroys the image outright (severe colour cast, features dissolve) with or
-  without a character LoRA — the usable band is ≈0.5 and it still is not identity.
-  `FACEID PLUS V2` on SDXL in turn requires **all three** of:
-  `ip-adapter-faceid-plusv2_sdxl.safetensors` (matched by regex `faceid.plusv2.sdxl.(safetensors|bin)`
-  in `comfyui_ipadapter_plus/utils.py::get_ipadapter_file` — a FaceID **LoRA alone is not enough**),
-  `ip-adapter-faceid-plusv2_sdxl_lora.safetensors`, and an `insightface` pack with
-  `det_10g.onnx` + `w600k_r50.onnx`. Missing the first one fails as
-  `Exception("IPAdapter model not found.")` at `IPAdapterUnifiedLoaderFaceID`, which is easy to
-  misread as an insightface problem.
-  For the objective ArcFace identity metric, a **minimal pack** (`buffalo_l_min/` holding only
-  `det_10g` + `w600k_r50`, see `verify_arcface.py`) is sufficient — it skips the 143 MB `1k3d68`,
-  and `FaceAnalysis` must be pointed at that dir because it loads **every** onnx it finds there.
-- To **copy a pose that already exists as a skeleton image**, use the ingest trio
-  (`blender_extract_kps.py` → `blender_fit_pose.py` → `blender_pose_error.py`).
-  Fitting runs inside Blender so the FK/projection cannot drift from the renderer,
-  and it is fast: **27.0 % → 6.9 % RMS in 11 s** on an arabesque target. The
-  residual floor is the mannequin's fixed proportions, not the pose.
-- To **get a pose out of a photo**, use ComfyUI's own detector —
-  `LoadImage → DWPreprocessor → SavePoseKpsAsJsonFile` — then
-  `blender_dwpose_to_kps.py` to convert the JSON (already COCO-18, no colour
-  extraction needed). DWPose beats `OpenposePreprocessor` on small input; keep the
-  `confidence` field, since low-score joints carry garbage coordinates and both the
-  metric and the fitter drop them below 0.3.
-- **`blender_pose_error.py` is same-view only**: the same 3D pose scores **87 %**
-  against itself across two camera angles. ~5–10 % means a good same-view fit;
-  50–90 % across viewpoints says nothing about the pose.
-- Control models on this host: `noob_sdxl_controlnet_depth.safetensors` (4.66 GB)
-  and `openpose_pre.safetensors` (2.33 GB) on Illustrious;
-  `anima-lllite-pose-1.safetensors` (0.02 GB) on Anima via
-  `AnimaLLLiteApply_sdscripts`.
-- Timings at 832×1216 on 6 GB: depth CN 85–105 s, pose CN 47–70 s, LLLite ~60 s,
-  img2img 41–49 s, depth+pose stacked 160–171 s (weights exceed VRAM; ComfyUI offloads).
-- `comfy_control.mjs` uploads control images to `input/dsh_ctrl` (delete after) and
-  reads results via `PreviewImage`/`type=temp`, so **nothing lands in `output/`**.
-- Hand keypoints fixed "mitten hands" in an A/B at identical seeds — but only
-  because the control model was trained with hands; A/B it, never assume.
+**完整流程、scenes.json 格式、坑与全部实测数字（denoise 分带表、手/脸修复边界、FaceID 三个权重文件、
+同视角才可比的 87% 现象、6 GB 上的耗时）：`references/blender_control_pipeline.md`。**
 
 ## Cutting the background out (matting / alpha)
-
-Full playbook with measured numbers: **`references/matting_and_cutout.md`**. Pick by input type —
-the difficulty differs by an order of magnitude:
-
-| Input | Route | Measured |
-|---|---|---|
-| Our own render, prompt said `plain white background` | `matte_flat_bg.py "out/**/*.png" --out DIR` | SAM score 0.961 mean over 19 images, 1–3 islands each, no decisions |
-| Someone else's illustration / poster | `matte_from_scribbles.py IMG --fg FG.png --bg BG.png [--subtract mask.npy]` | IoU 0.737 against a hand-cut GT (0.779 when the best SAM proposal is hand-picked via `--pick`) |
-| Flat chroma background | `chroma_key.py IN.png OUT.png` | background-coloured pixels left inside: 0.000% |
-| Need props/effects **removed** or occluded areas **rebuilt** | `bailian_image_edit.py edit IN.png OUT.png "<instruction>"` then `chroma_key.py` | one 21 s call, but it re-renders: two prompt variants agreed at only alpha IoU 0.586 |
-
-Key facts that decide the approach (each cost a failed attempt):
-
-- **SAM, not colour.** `models/sams/sam_vit_b_01ec64.pth` ships with this skill; install with
-  `pip install segment-anything`. GrabCut fails on white hair over a white background, and a
-  lineart-dam flood fails on posters whose background is dark and textured.
-- **The proposal choice matters more than the prompt.** With a box over the whole subject, SAM's
-  highest-scoring mask is often everything in the box. `sam_object_mask.segment` ranks proposals
-  by IoU against the rough foreground / the human's scribble, and `matte_from_scribbles.py` prints
-  every proposal so `--pick` can override.
-- **Do not invent island rules.** On a poster, "keep only the largest island", "islands right of
-  x=500 are flames" and "pale islands are flames" respectively deleted the long hair sweep + lower
-  leg, the red wing ornament, and the entire character. Use the human's scribble per island: it
-  agreed with the hand-cut ground truth on **7/7** islands.
-- **Hosted edit models return no alpha** and re-render rather than segment, so a cutout from them is
-  "draw on chroma → key locally", and the pixels are the model's, not the original's.
-- **Verify, don't trust.** `score_matte.py GT.png mine.npy` (IoU / FP / FN / edge + error clusters)
-  plus `compare_matte.py` (red = missed, blue = added) before claiming a matte is good.
+按**输入类型**选路线，难度差一个数量级：自家渲染且提示词写了 `plain white background` →
+`matte_flat_bg.py`；别人的插画/海报 → `matte_from_scribbles.py`（要人给 FG/BG 涂鸦）或 `SAM3_Detect`；
+纯色幕布 → `chroma_key.py`。完整选路表、实测数字与评分方式：**`references/matting_and_cutout.md`**。
 
 ## Upscaling (2x / 4x) — after generation, before delivery
-
-Chain: **`UpscaleModelLoader` → `ImageUpscaleWithModel` → `SaveImage`**. No diffusion pass,
-so it is fast and deterministic — 1216×832 → 4864×3328 takes seconds, not minutes.
-Reference graph: `references/upscaling_workflow.json`. Model sources, the verified download
-URLs and the full comparison: **`references/upscaling.md`**.
-
-**Measured 2026-09-17** — same source, same 200×200 face crop, all four shown at 4×:
-
-| model | verdict |
-|---|---|
-| `4x-AnimeSharp.pth` | **best** — cleanest line art, hair strands separate, no sharpening halos. **Use as default.** |
-| `RealESRGAN_x4plus_anime_6B.pth` | good, marginally harder / more aggressive sharpening |
-| `4xhfa2kludvaeswinir_v1.safetensors` | general purpose, not anime-tuned |
-| `2x_AnimeJaNai_HD_V3_SuperUltraCompact.pth` | **REMOVED 2026-09-25** (moved to `agent_work/_disabled_upscalers/`) — it was **noticeably softer than either 4x model**, and using it was the actual cause of "upscale looks blurry" reports. Use `4x-AnimeSharp` then Lanczos-halve instead. |
-
-Rules:
-
-- **Install the model; don't blame the node.** A weak upscale almost always means a weak or
-  missing `.pth`, not that ComfyUI's upscaling is bad. The default install shipped with only
-  a 2x anime model and a general-purpose SwinIR, which is why it looked poor.
-- **Deliver at 2×.** 4× from a 1216-wide source is 4864 px / 16 MP. Keep the 4× result and
-  downscale it by 2 with LANCZOS — a 4×-then-downscale beats a native 2× model.
-- **Upscaling is not a substitute for framing.** If the subject is too small in frame, crop to
-  it first and upscale that, rather than enlarging the whole canvas.
-- **Only ESRGAN-architecture `.pth` loads in `UpscaleModelLoader`.** Real-CUGAN is a different
-  architecture and needs its own runtime (ncnn) — see `references/upscaling.md`.
-- **Fixing a few pixels inside a big image** is a different job from upscaling: cut the region
-  out with `SmartImageCrop`, repaint it, paste it back with `SmartImageStitcher`, and limit the
-  repaint with `SetLatentNoiseMask` on a **shaped** mask. Cost tracks the crop, not the canvas
-  (a 3328×4864 page took **44 s** against 80 s for its 832-wide source). Full playbook:
-  **`references/local_repaint_bigcanvas.md`**. Note the measured negative result there: the
-  "4x → shrink → 4x" chain does not work out, because the model's factor is fixed at 4x.
-  The same reference now also has the **no-custom-node route** (PIL crop → sample → paste by mask,
-  with the `LoadImage MASK = 1 − alpha` trap that turns a repaint into a silent no-op), the
-  `min-sample` rule for tiny targets, and when to **split one diagonal region into two passes**.
-  **The stitcher itself is bit-exact; the crop's *rescaling* is what moves pixels (2026-10-04, corrected).**
-  A previous note here claimed `SmartImageStitcher` "does not limit its change to the mask" (4.31 % out-of-mask,
-  `max Δ 83`, and attributed it to the stitcher + its feather). **That claim was wrong** — the user challenged it
-  (the node only cuts and pastes back) and the isolation experiment confirms it: with the crop **not rescaled**,
-  a pure passthrough (`crop_image → SmartImageStitcher`, **no sampler at all**) reproduces the original
-  **bit-for-bit** — out-of-mask `>2/255` = **0.0000 %**, `max Δ 0` — with `Box Feather 32` and with or without the
-  stitcher's `mask` input. The **full sampled** graph is bit-exact too once the crop is not rescaled and the mask is
-  wired (out-of-mask **0.0000 %**, `max Δ 0`, in-mask 62–73 % changed).
-  The drift comes from **`SmartImageCrop` resizing the crop** — `force_divisibility=128` / `min_resolution=768`
-  force a resize even with no sampling (measured 0.0542 % out-of-mask, `max Δ 46` just from crop→paste), and if the
-  stitcher's `mask` is *not* wired the whole crop box carries that difference (0.3352 %, `max Δ 229`).
-  So: **set `force_divisibility=8` (and a `min_resolution` the mask bbox already clears) so no resize happens, and
-  wire `crop_mask` into the stitcher's `mask`** — then either route is exactly 0 outside. Report `max Δ outside
-  mask` plus the `>2/255` percentage. Measurement script + raw numbers: this session's
-  `task/lumine_hospital_20261004/verify_stitcher.py` (cases P1–P7).
-
-### Shrinking to the delivery size, and proving sharpness
-
-- **Downscaling is part of the recipe, not an afterthought**: `ImageUpscaleWithModel` → `ImageScale`
-  (`lanczos`) to the target long side. Delivering the 4× output directly is 16 MP of no extra
-  information.
-- **A plain resize is not a substitute for the upscale model.** Same source, same target size
-  (3000 px long side): plain LANCZOS gives `|Laplacian|` mean **3.04** / P99 44; 4×-AnimeSharp then
-  Lanczos gives **5.17 / 94**, against the 2000 px original's 5.53 / 89 — i.e. the model preserves
-  the source's edge energy while a bare resize loses ~40 % of it.
-- **Score sharpness at the same pixel size, on the luminance channel**, using the 3×3 Laplacian's
-  mean absolute value and P99 . A
-  57 % gap is real; 5 % is noise. This is also how to settle "which upscaler" and "did my
-  re-sharpen pass help" without arguing from impressions.
+链路：**`UpscaleModelLoader` → `ImageUpscaleWithModel` → `SaveImage`**，不过扩散、秒级完成。
+默认 `4x-AnimeSharp` + Lanczos 收到目标宽度；交付尺寸与清晰度证明见
+**`references/upscaling.md`**（含模型下载地址、四种放大器的实测对比与"2x 模型已移除"的决定）。
 
 ## Comic page — tiling N panels into one page
-
-When the deliverable is a **page** rather than separate images: one image, N cells, straight
-or slanted dividers, no white margin inside any cell, key content always visible, reading
-order preserved. Two scripts:
-
-| Script | Role |
-|---|---|
-| `libs/comic-layout/scripts/comic_layout.py` | layout search + renderer. `comic_layout.py OUT.png IMG... --page 1400x3200 --beam 12 --weights 1,0.6,1,0.6,1,1,1` |
-| `libs/comic-layout/scripts/letter_page.py` | balloon shapes, text-box search, anchor solving (imports `comic_layout`) |
-
-Design in one line: **recursively cut one convex cell with one straight line** — arbitrary
-angles become legal, the union stays exactly the page, and because a cut hands range
-`[lo..k]` to one side and `[k+1..hi]` to the other, reading order is structural. Each cell is
-then filled with a `cover`-scale crop of its image (so it can never letterbox) slid to keep
-that image's **key region** inside.
-
-Full playbook — the objective terms, the two ways of getting reading order wrong (pairwise
-ordering, and banding by vertical overlap), the blank-area probe, and the balloon geometry:
-**`references/comic_page_layout.md`**.
-
-Three things worth knowing before starting:
-
-- **Ask the human for two annotations, not one.** Key regions *and* balloon anchors are
-  semantic judgements — for a panel holding two people, tile statistics cannot say which is
-  which. `human_canvas` with a labelled contact sheet (or pre-seeded nodes the human only
-  drags) makes this cheap.
-- **Probe before changing a constraint.** The search left 13.8% blank against an 8% target;
-  raising the penalty 700x reached 7.7%, so it was a trade, not an infeasibility. Reworking
-  the constraints would have been wasted work.
-- **Every objective term is a normalised ratio**, so energy is comparable across page sizes
-  and sweeping them is meaningful — on a 7-panel set a 1:2.29 strip scored 8.26 against
-  14.95 for the next best, because portrait panels stack naturally on a tall page.
+交付物是**页**而不是单图时（N 格、直/斜分格线、格内不留白边、阅读顺序）：`libs/comic-layout/scripts/comic_layout.py`
+做分格搜索与渲染，`libs/comic-layout/scripts/letter_page.py` 做气泡、文字框搜索与锚点求解。设计要点（递归一刀切一个凸
+胞，任意角度都成立、并集恰好是整页）与全部参数：**`references/comic_page_layout.md`**。
 
 ## Cloud APIs — generation and editing (and how to merge the answer back)
-
-Local ComfyUI is the default; a hosted model earns its place where the local stack is
-structurally weak: **text inside the image** (in-image Chinese/Japanese lettering, calligraphy,
-signage), adding/refining objects on top of a hand-edited base, and scene-level cleanup.
-
-| Service | Route | Facts |
-|---|---|---|
-| 百炼 / DashScope `qwen-image-edit-max` | `scripts/bailian_image_edit.py edit IN.png OUT.png "<instruction>" [--ref R.png] [--prompt-file F]` | synchronous, 20–50 s, model re-renders (no alpha, its own output size) |
-| GPT-image (OpenAI) | hand the human a **package** (crop + mask + prompt) — no local script | best at **legible text**; mask convention is **transparent = editable** |
-
-**① 参考图是必给的，不是可选（用户 2026-10-03 强调）。** `--ref` 里的图是**内容参考**：
-画**某个角色**时，云端不会照你的文字去认人 —— 先在**本地出该角色的三视图**（正/侧/背，干净背景）
-或找一张该角色的图当参考；有**具体场景**需求时同理（环境/道具/光线也要给参考图）。
-**不给参考图 ⇒ 环境和人物都会对不上**（模型按自己的先验编）。
-
-```
-# 角色：先本地出一张干净的三视图，再拿它当参考
-... 本地 Anima/IL 出 char_sheet.png（front / side / back，plain background）
-python scripts/bailian_image_edit.py edit IN.png OUT.png "<instruction>" --ref char_sheet.png
-# 场景：再把环境参考也一起给（可重复 --ref）
-python scripts/bailian_image_edit.py edit IN.png OUT.png "<instruction>" --ref char_sheet.png --ref room.png
-```
-
-其余五条（都是实测，细节在 `references/cloud_edit_and_merge.md`）：
-
-- **参考图是"内容参考"，不是控制图** —— 所以它**指定"是什么"，不指定"怎么摆"**：
-  只给骨架图 ⇒ 姿势错、还多出一个人；**姿势要用文字描述**。两张图的分工是
-  **`--ref` 定人物与环境，文字定动作与构图**。
-- **Hosted models refuse R-18 edits outright** (measured 2026-10-02): DashScope/百炼 answered
-  **HTTP 400 `DataInspectionFailed`** — *"Input data may contain inappropriate content"* — to an
-  instruction that asked to **add rope bondage**. The filter reads the **instruction text**, so no
-  amount of wording craft gets it through, and **rewording to slip past it is evading a provider's
-  safety control — don't do it**. Split the job instead: the innocent siblings of the same edit went
-  through fine (*"摆成太极式中心对称躺姿"* ✓, *"把床单上的图案换成普通床单被子枕头"* ✓) ⇒
-  **innocent steps → cloud, rope/BDSM/undress steps → local**.
-  2026-10-03 补两条：**连"不要 XX"都不能写** —— 指令里写了 *"画面里不要出现绳子"* 本身就吃了 400
-  （过滤器匹配**关键词**，"禁止"也算提到；同"正向写否定无效"那个坑）；以及**输入图也会被审** ——
-  一张正面朝观众的坐姿＋抬腿（穿着完整、无绳）被拒，而同角色的站姿四视图能过 ⇒ **同一姿势的侧视/背面更容易过**。
-- **They do not respect the mask.** GPT-image's answer differed from the sent crop by >12 in
-  **3.57 %** of the *outside-mask* pixels, with a ±6 px alignment sweep choosing (0,0) as best —
-  tonal drift, not a shift. Bailian repainted a night sky **13 levels brighter** and moved a rope's
-  entry point **56 px**. So: **paste back by mask, never replace the image.**
-- **Fine-grained content rules get ignored** — "write only the six visible characters" came back as
-  the whole couplet, with a mis-written character and one inserted. List the characters one by one,
-  and prefer the model that got 6/6 right.
-- **Never let a cloud model own a thin structure** (rope, leash, cord) that must line up with the
-  rest of the picture: keep those pixels from the original in every merge mode.
-
-Merge patterns that work: **mask paste** (tool respected the mask) · **subject-only** (mask =
-old∪new subject silhouette — background stays bit-exact; needed when the tool also re-lit the
-background) · **rect / vertical-split** (leave the seam to the human in PS, or combine two
-strengths: body 0.3 + sky 0.5 with a 30 px ramp). Two guards: a **dark guard** in the feather ring
-(`min(base, result)`, kills the halo of a lighter cloud sky) and a **sky match** (add the median
-per-channel offset measured on non-subject pixels). Verify with
-`diff_report.py base.png merged.png --mask m.png`: in-mask ≈ 30 % changed, **out-mask 0.0000 %**.
+本地 ComfyUI 是默认；只有在本地栈**结构性不行**的地方才上云：图内文字（中日文书法/招牌）、
+在手改过的底图上加物件、场景级清理。选哪家、key 从哪来、参考图怎么给、答案怎么按掩版贴回本地，
+全部见 **`references/cloud_edit_and_merge.md`**（含"参考图必给"与逐字执行指令这两条用户强调的规矩）。
 
 ## Human in the loop — `human_canvas` (rough 2D) and `ps_edit` (real Photoshop)
 
@@ -954,134 +502,30 @@ python "<你的用户目录>\.dsh\skills\comfyui-image-generation\scripts\check_
 hands_state(visible|not_visible|zero_detected) / rope / persons / persons_masks / seconds*`。
 
 ### 逐人掩版（多角色属性串扰的正解）
-同一张图里"谁被绑/谁自由、谁黑发/谁白衣"这类**属性独占**需求，提示词经常压不住（实测 8~10 次失败：
-模型会按颜色把道具配对、同类并置结构互相传染）。**结构性**解法是逐人掩版重绘 —— 一人一次 pass，
-另一人的像素在这一次里被冻结：
+同一张图里"谁被绑/谁自由、谁黑发/谁白衣"这类**属性独占**需求，提示词压不住；结构性解法是逐人
+掩版重绘（一人一次 pass，另一人像素冻结）。一条命令出掩版：
+`python scripts/check_parts.py --src BASE.png --out OUT --person-masks --json`
+产物在 `OUT/mask/`：`<name>_person0.png`（255=重绘区）与 `<name>_person0_rgba.png`
+（**重绘区 alpha=0**，因为 ComfyUI 的 `LoadImage` MASK = 1 − alpha）。掩版怎么定（重叠自动切分、
+头并进来、`person_*` 字段含义）与逐人 pass 的完整做法：**`references/local_repaint_bigcanvas.md`**。
 
-```bash
-# 1) 定位 + 出逐人掩版（默认 pose 提示 + SAM）
-... check_parts.py --src BASE.png --out OUT --person-masks --json
-# 2) 掩版在 OUT/mask/：<name>_person0.png（灰度 255=重绘区）与 <name>_person0_rgba.png（重绘区 alpha=0）
-# 3) 每人一次：LoadImage(RGBA) → VAEEncode → SetLatentNoiseMask → KSampler(denoise 0.65~0.70) → VAEDecode
-#    串行跑，每个 pass 只碰一个人
-```
-
-**实测经验（踩过的坑，照做能省几次废图）**
-1. **ComfyUI 的 `LoadImage` MASK = 1 − alpha** ⇒ 要重绘的地方 **alpha 必须为 0**。`_rgba.png` 已经按这个约定写好；
-   用灰度 `_personN.png` 自己接时，记住 255 = 重绘区。
-2. **别为了"保住某根细绳/某个道具"在掩版里挖洞**：框外的像素本来就不会被重绘，绳的连续性自动保住；
-   在**人身上**挖洞会把该处冻结住，"把绳从她身上去掉"这类减法就永远做不到（实测被用户一眼看出孔洞）。
-3. **掩版边缘羽化 8~16 px**（或收尾补一次整图 denoise 0.25~0.3）：硬边掩版会在潜空间 8× 下采样后留下
-   一条淡色竖缝（雪地这种平坦背景最容易看出来）。掩版外的变化应 <1%（实测 0.5~0.8%，就是那条晕环）。
-4. `--grow`（默认 15）就是留接缝余量；**别用检测框直接当掩版**（会把坐着的人下面的椅子/雪橇一起重绘）。
-
-**逐人掩版是怎么定的（可查、可反驳）**：`persons_masks` 每个实例给出`tag / person_id / chain / source(M1 或 M1+M2a 或 M2a) / prompt / area_frac / pose_coverage / merged_from`，
-外加 `person_boxes_dropped`（低置信或嵌套的 person 框及原因）与 `person_instances_merged`（哪些链被合并）。
-- **角色以 M1 骨架链为准**（一条链 = 一个人）；M2a 的 person 框只用来给链配 `person_id` 和置信度过滤。
-  实测同一张图 M2a 会给出 3 个框（0.90 / 0.44 / 0.31，后两个是重叠伪框），而 M1 的两条链才是真正的两个角色。
-- **没有骨架支撑的 person 框不出掩版**（默认；`--allow-box-only-persons` 可强制，整张图一条链都没有时也会自动放行）。
-  这条是用户复核后加的：餐厅那张图里 `prob=0.31` 的伪框正好覆盖**左侧整面墙**，给它出掩版就是**纯错标**。
-  被丢掉的框与原因都写在 `person_boxes_dropped`（`low_prob` / `nested_in_other` / `no_skeleton`），
-  每个产出的掩版还带 `supported_by_pose`（有没有骨架证据）。
-- **`pose_coverage` < 0.7 就该人工看一眼**（该角色的可见关键点有多少落在掩版里）；掩版完全错时它会很低。
-- **逐人掩版保证互不重叠**（`--no-exclusive-persons` 可关）：两人贴在一起时，重叠像素按**掩版内部深度**
-  （各掩版到自身边界的距离变换）判给"更深在谁身体里"的那一位 —— 接缝沿两人身体的中介线走，像手工描的分界。
-  旧的直线切法仍可用（`--overlap-split bisector`），但它会横贯身体切出一道直边（实测：两人靠肩那张，
-  直线切会把靠肩那位的脸和另一位的头发各切一条竖线）。被处理的重叠写在 `person_overlaps_resolved`。
-  实测：自动分配 57k 争议像素 ⇒ **最终重叠 0 px**，两种切法归属不同的像素 12.6k（就是接缝那一条）。
-- **头一定在掩版里，但不鼓成"光环"**：M1 的关键点凸包只包住"鼻/眼/耳"那一小块，盖不到头骨与头发 ⇒ 掩版显式
-  并入该角色头部的椭圆；椭圆优先按 **M2b 的 face 框**（比 M2a 的 head 框紧）算，并与该角色自己的轮廓求交，
-  否则两人靠一起时两圈"头光环"交叉，看起来就是一团奇怪的十字。
-- **`pose_coverage` < 0.7 就该人工看一眼**（该角色的可见关键点有多少落在掩版里）；掩版完全错时它会很低。
-- **覆盖策略（`--person-mask-cover`，默认 `auto`）**：用户 2026-10-13 定调 —— **宁可多盖**。
-  理由：用这套流程的基本都是 agent，做的是**中等/大尺寸特征**的重绘；"只改了一半个人、接缝卡在躯干上"
-  比"多盖一点（含骨架之间的空隙，甚至蹭到一点道具）"糟得多；**细小特征本来就不指望 agent 做，人工来**。
-  `auto` = 先算贴边掩版，关键点覆盖 < 0.9 就补上骨架凸包（外扩 3% 身高）——两张真实多角色图上都触发了，
-  覆盖从 0.59/0.76 变成 **1.00**；`tight` 留给"绝不能碰到道具"的场合。
-- 实测对照（同一张坐姿图）：`tight` 4.4%（她下半身在桌下漏掉）→ `auto` 12.0%（整条骨架都在内）。
-- `merged_from` 非空 = M1 把一个角色拆成了两条链，工具按"掩版重叠 > 较小者的 50%"合并了。
-- 两张真实多角色图上的实测：`sled`（2 人，坐姿）→ 2 个互不重叠掩版（8.2% / 5.4%，椅子被排除）；
-  `rest`（2 人 + 桌椅）→ 合并后 2 个掩版（11.9% / 4.4%），桌椅都不在掩版里。
-- 成本：`--person-masks` 比不加慢 ~10 s/张（SAM ViT-B 在本机 GPU 上 1~2 s/张 + 每角色一次 predict）。
-
-### 局部特征重绘 + 打底（underpaint）—— 第 2 份使用报告打出来的经验
-**① 特征掩版**：`--feature-masks` 直接给 `hand*/foot*/head*/face*/gag*/blindfold*/eye*` 的框掩版，
-外加一个 **`mouth*` = 脸框下 42%（横向内缩 12%）**。为什么要单独给 mouth：报告实测 **M1 的鼻/嘴细点不可信**
-（鼻点落在嘴上、嘴位落在下巴），而**框是可信的** ⇒ **重绘嘴用脸框推，不要用关键点推**。
-（可靠度分层：`M2a 手框 / M2b 脸框` 可信 > `M1 细点` 不可信。）
-
-**② 掩版组合器 `mask_compose.py`（agent-in-the-loop）**：不必要求一次给对掩版 —— 检测已经落盘了可靠的东西，
-剩下"这次要改哪一块"由 agent 自己拼。图元（`--box` / `--circle` / `--poly`）+ 已有掩版（`--union` / `--sub`）
-+ `--grow` / `--feather`，秒级、不需要 GPU：
-```bash
-# 指尖一个小圆 + 脸框下半；羽化 8px（给潜空间 8× 下采样留余量）
-python libs/sam-matting/scripts/mask_compose.py --like base.png --circle 430,352,74 \
-  --union out/mask/feature/base_mouth0.png --grow 4 --feather 8 --out mask.png --rgba mask_rgba.png
-# 只要这个人：person0 减掉 person1
-python libs/sam-matting/scripts/mask_compose.py --like base.png --union out/mask/base_person0.png \
-  --sub out/mask/base_person1.png --out only_p0.png
-```
-（它**拒绝**把 `--rgba`/`--out` 指到输入图上，避免把原图改写成带透明区的 RGBA。）
-
-**③ 打底（underpaint）—— 加"原本不存在的物件"时必须先做**：局部重绘是**基于已有像素**去改的，
-那块本来什么都没有，重绘结果就不可控。做法：**先用程序/PS 在目标位置粗画出那个物件**（哪怕只是色块/椭圆），
-再掩版重绘（denoise ~0.70）——**打底给"形"，重绘给"质"**。报告实测：程序粗画的红球 → 一次重绘变成
-有高光/柄/叶/抓握关系的苹果，而**直出两次都失败**（模型会为了让"手能拿到苹果"而**解放被绑的肢体**：
-道具动作与拘束结构互相抢 ⇒ **先定结构、再局部补道具**）。
-
-  **形的三个来源（按图案复杂度选）**：① **程序粗画**（`scripts/tools/pattern_fill.py`：纯色/条纹/格子/点阵 + 描边 + 外扩；或 `mask_compose.py` 的图元）；② **人手绘**（PS 或画布 —— **复杂/有机/细致的图案建议走这条，人画一次比返工三次便宜**）；③ **画布给区域 + 脚本填充**（人涂一层 → `pattern_fill.py --mask 那层`）。三条路的命令、掩版规矩（外扩 2~8 px、**绝不压结构件**）与反例见 **`references/underpaint_and_stencil.md`**。
-
-**④ 掩版绝不要压到结构件**：同一份报告里颈环/腕铐/横杆被画坏，唯一原因就是掩版放大到压上了它们；
-改成"指尖小圆（离金属杆 90 px）+ 脸框下半（底边停在颈环之上 4 px）"后结构件毫发无损。
-⇒ 凡是重绘区旁边有**道具/家具/拘束具**，先 `mask_compose --sub` 掉它们，或用小图元贴着特征走。
-
-**⑤ 提示词自相矛盾会毁掉重绘**：报告里两次失败各有自己的矛盾句（`the top of her fingers is bare` vs 要画苹果、
-`pouting` vs `her mouth is open`）—— 模型会挑其中一条执行。重绘前把整段提示词通读一遍。
+### 局部特征重绘 + 打底（underpaint）
+① `check_parts.py --feature-masks` 直接给手/脚/头/脸/口塞/眼罩/眼 的**框掩版**，外加
+`mouth*` = 脸框下 42%（横向内缩 12%）——**COCO-17 根本没有嘴点**，重绘嘴只能用脸框推。
+（M1 换成微调 ViTPose 后鼻/眼/耳已经可信：报告集面部中位误差 15.9px；但**背面/侧脸视图下脸点仍会飘**，
+所以"嘴/脸这类细部位一律用脸框推、不用关键点"这条规矩不变。）
+② `mask_compose.py` 是 agent-in-the-loop 的掩版组合器（图元 ∪/∖ 已有掩版），不必一次给对。
+③ 打底（underpaint）三条路与掩版规矩见 **`references/underpaint_and_stencil.md`**。
 
 ### 两个"模型不认识的新角色"同框、且不许反左右（2026-10-13 第 3 份报告的标准解）
-1. **先出一张不挂任何角色 LoRA 的"版式底图"**，把布局与关系做对；方向一律写**画面坐标系**
-   （`the girl on the left side of the image`、`leans sideways to her left`），负面点名
-   `mirrored composition / swapped positions`；
-2. `check_parts.py --person-masks` 拿**每人一块、互不重叠**的掩版（见上：重叠会自动切分、头会自动并进来）；
-3. **每次只挂一个人的 LoRA**（1.0/1.0 + sidecar 的完整触发词表），`denoise 0.65~0.75`，串行两次；
-4. **每人的重绘提示词里都写一遍接触关系**（"the other girl leans her head on her shoulder"），否则边界处的姿态会被改坏。
-> 中文角色名在 LoRA 文件名里常搜不到，但写在 sidecar 的 `model_name` 里（遍历匹配）；最全的触发词在
-> sidecar 的 `civitai.images[].meta.prompt`。
-
-**模型与代码位置（只给路径，不复制）**
-
-| 东西 | 路径 |
-|---|---|
-| 套件根 | `<ANIME_DET_SUITE>`（`--suite` 或环境变量 `ANIME_DET_SUITE` 可覆盖） |
-| 产线入口 | `<套件>\scripts\locate.py` |
-| 推理环境 | `python`（ComfyUI 自己的 env，有 torch+ultralytics；`--python` 可换） |
-| 权重 | `<套件>\runs\<name>\weights\best.pt`；每层的默认权重写在 `locate.py` 顶部的 `DEF_*` |
-| M1 骨架 | `runs/m1_pose_coco17` + `runs/m1_pose17_1129`（取检出人多的） |
-| M2a 框 | `runs/m2a_det_996img_960`（person/hand/foot/head）+ `runs/m2a_foot_v1`（单类脚，取并集）；可选 `runs/m2a_hand_v2`（单类手） |
-| M2b 面部 | `runs/m2b_face_v3_3983`（输入是 head 裁剪的 256×256） |
-| M2b-gag | `runs/m2b_gag_v2` + `runs/m2b_gag_v4`（并集；口塞/眼罩） |
-| M3 指趾判定 | 现役 `runs/m3_cls_aug_v1` + `runs/m3_review_v1`（**val 有训练集泄漏**，见套件 R43）；推荐 `runs/m3_clean_v1_s2026{1,2,3}010` |
-| M4 绳子 | **不在本入口**：由 rope 模块产出 `data\masks\rope\<name>_{mask,conf}.png`，`locate.py` 只按约定路径引用 |
-
-**已知限制（别把"没报错"当成"一定没问题"）**
-1. M3 的诚实指标（按源图 5 折折外）：召回 **0.74（单模型）/ 0.79（双权重并集）**，ok 误报 14%~19%；**手（0.61）明显差于脚（0.85）**。
-2. 脚召回靠三级兜底（4 类 ∪ 专用脚 ∪ 踝点外推）；契约 JSON 的 `boxes` **不含**兜底补的部位（见 `boxes_all`）。
-3. 分辨率：`--imgsz 1600` 明显好于 1280（手覆盖 4/8→5/8，08 那种"趾多"从只被收紧旗标报出变成进主判定），代价约 1.5~2× 时间；本机 1536×1024 的图在 1280 下约 17 s/张、加 `--person-masks` 再 +10 s。
-4. 上面的验收数字都来自**同一批 8 张图**，小样本；换风格/题材请自己再复核几张。
-5. `rope` 只表示"**rope 模块有没有留下掩版文件**"（`present|missing`），**不代表图里没有绳** —— 本入口不做绳子检测。
-6. 更细的接口与实验记录在 `<套件>\docs\`：`integration.md`（接口与降级）、`runs.md`（R1~R49 实验）、`handover_20261012.md`（现状与待定项）。
-
-**契约 JSON 里给下游用的字段（2026-10-13 新增，都是加法式的）**
-- `points[].person_id` / `boxes[].person_id`：把点/框挂到具体某个角色上（多角色图做逐人处理时必需）。
-- `n_persons`（M2a 的 person 框数）与 `n_skeletons`（M1 链数）分开报；旧的 `n_people` 仍是骨架数（兼容）。
-- `boxes_all`：`boxes` **加上**兜底补的部位（专用脚 / 踝点外推 / 专用手），每个框带
-  `origin: det | fallback`。做掩版请用 `boxes_all`，否则会漏掉兜底找回来的脚。
-- `persons_masks` / `person_boxes_dropped` / `person_instances_merged`：见上面"逐人掩版是怎么定的"。
-
-**想更新模型**：把新权重放到 `<套件>\runs\<name>\weights\best.pt`，然后改 `locate.py` 的 `DEF_*`，
-或调用时用 `--m3-weights/--hand-weights` 指定；`--recipe rec` 就是"实测更好但还没转正"的那一套。
+1. 先出**不挂任何角色 LoRA 的版式底图**，方向一律写**画面坐标系**，负面点名 `mirrored composition`、
+`swapped positions`；2. `check_parts.py --person-masks` 拿每人一块互不重叠的掩版；3. **每次只挂一个人
+的 LoRA**（1.0/1.0 + sidecar 完整触发词表）`denoise 0.65~0.75`，串行两次；4. 每人的重绘提示词里都
+再写一遍接触关系。完整四步与证据：**`references/prompt_writing.md`**。
 
 ## Finding a LoRA and its trigger words
+**检索与下载**（civitai 用 `?query=` 而不是 `?search=`、shell 直连 403、十六进制文件名、base 匹配、
+校验与放置）见 **`references/lora_sourcing.md`**；下面只讲"拿到之后怎么读它的触发词"。
 - **Keep `strength_model` and `strength_clip` at 1.0** (user rule, 2026-09-29). Interpolability in
   latent space is *empirical, not a strict property*: a LoRA is a trained perturbation, and
   scaling its strengths does not guarantee a smooth blend — it can quietly degrade the identity,
@@ -1113,64 +557,6 @@ python libs/sam-matting/scripts/mask_compose.py --like base.png --union out/mask
   **Match the LoRA's base pipeline**: a LoRA trained on Anima (`anima`) goes in the Anima workflow; one trained on Illustrious/SD goes in the IL workflow. Applying a LoRA to the wrong base yields poor output.
 
 ## Troubleshooting
-- **`To see the GUI go to ...` never appears** — check the job output tail; likely the sandbox write denial or a db lock (see Start/stop section).
-- **`node_errors` non-empty on submit** — the graph references an unknown node or bad enum; re-query `/object_info` for the exact field values.
-- **Very slow first run** — the model loads into 6 GB VRAM (async offload); SDXL/Anima at 1024² typically takes ~20–90 s including model load.
-- **Garbled / wrong-character result** — check in this order: (1) the LoRA's base-model family matches the pipeline; (2) **the trigger list is complete** (sidecar `civitai.trainedWords` *and* `civitai.images[].meta.prompt`, plus `ss_tag_frequency`) and none of your own tags contradict the LoRA's own words; (3) drop conflicting prompt tags. Do **not** reach for `strength_model`/`strength_clip` first: interpolating a LoRA's strengths is only empirically smooth, not a guaranteed blend, and lowering them silently weakens the very identity you are trying to fix — keep both at **1.0** unless the LoRA visibly damages the image (then prefer another LoRA, and lower strength last).
-- **Blender exits 1 at startup** — missing `--factory-startup` (it tries to write the user extension cache under `%APPDATA%\Blender`).
-- **Blender exits 1 AFTER saving every file** — same extension cache, denied by the sandbox. Check the files exist rather than trusting the exit code, or set `BLENDER_USER_EXTENSIONS` to a workspace path for a clean exit.
-- **Skeleton offset from the clay render** — keypoints projected in armature space; multiply by `arm_obj.matrix_world` first.
-- **Depth map is a flat gray slab** — near/far anchored to the whole scene instead of the subject.
-- **img2img output is monochrome** — a gray clay init at low denoise; raise denoise to ~0.8.
-- **Stacked ControlNets re-frame the subject** — keep the depth weight ≥ 0.7.
-- **Any HTTPS download fails with `schannel: AcquireCredentialsHandle failed`** — this host's
-  shell has no direct internet and Windows TLS cannot obtain credentials inside the sandbox.
-  Do not fight it: use the local proxy `127.0.0.1:6132` with **Python**
-  (scripts/fetch_url.py), which goes through OpenSSL. `curl` and
-  `Invoke-WebRequest` will keep failing no matter what you set `SecurityProtocol` to.
-- **Upscale output looks soft** — check which `.pth` is actually loaded. `2x_AnimeJaNai` was
-  much softer than `4x-AnimeSharp` (it is **gone** as of 2026-09-25 — see Machine facts), and a
-  4× result downscaled to 2× beats a native 2× model. If a render still looks soft, the softness
-  usually comes from an earlier step (an upscale-then-repaint chain bakes the soft input in),
-  not from the last resize.
-- **A local repaint changed nothing** — the most common cause is the **inverted mask**:
-  `LoadImage`'s MASK is `1 − alpha`, so a mask written into alpha as-is repaints the complement
-  (a silent no-op). Write `putalpha(255 - mask)` and prove it with `diff_report.py`: in-mask
-  change ≈ 30 %, **out-mask 0.0000 %**. A mask that is empty or reversed shows as in-mask ≈ 0.
-- **A CLI flag appears to do nothing** — read the graph that was actually submitted
-  (`wf/*.json`). A `--lora-strength` that never reached `LoraLoader.strength_model` (hard-coded
-  0.8) is indistinguishable from "denoise is too low" in the output; the fix is in the script,
-  not in the numbers.
-- **A cloud-edited region does not sit in the picture** (visible rectangle, halo, or a rope that
-  no longer lines up) — the tool ignored the mask and/or re-lit the background. Never replace the
-  image with its answer: paste **by mask**, use the subject-only merge with a dark guard, match
-  the background's median colour offset first, and keep thin structures' original pixels
-  (`references/cloud_edit_and_merge.md`).
-- **A preprocessor returns `people: []` / an empty result for an image you already uploaded** —
-  `LoadImage` + preprocessor results are cached **by filename**. `upload(..., overwrite=true)`
-  rewrites the bytes but the node still serves the **old** cached result, so re-using one input
-  filename pins whatever the first run produced — including a first-run *failure*, permanently.
-  Measured 2026-10-03 on `OpenposePreprocessor`: same fixed name → `face_keypoints_2d` 0 / `people: []`
-  on every repeat; same bytes under a fresh name → **face 70/70, identical bbox**, 3/3 runs.
-  Do **not** "fix" this with a content hash — identical content means an identical name, which makes
-  a cached empty result deterministic. Upload each detection input under a **unique** name
-  (`role_stem_timestamp_rand.png`). This also silently ruined a dose sweep: every variant after the
-  first reported "no face found", which looks exactly like a flaky detector.
-- **A script reports "detection failed" but the detector is fine** — on Windows the console defaults
-  to GBK, so `print("✗ …")` raises `UnicodeEncodeError` and **kills the process**; the caller sees a
-  non-zero exit and no success line. Measured: 3/3 "no face found" without the guard, 3/3 success
-  with it, same image. Put `sys.stdout.reconfigure(encoding="utf-8", errors="replace")` at the top of
-  every script that prints symbols, and invoke child scripts with `python -X utf8`.
-- **Deciding a download source is broken** — this host's international routes can drop
-  completely (measured 2026-10-03): hf-mirror / huggingface.co / github.com / ghproxy /
-  jsdelivr / pypi.org all `URLError` (DNS resolves, TCP fails) while baidu / bing /
-  modelscope.cn / mirrors.aliyun.com / pypi.tuna are fine. Run that reachability matrix **before**
-  blaming the source, and prefer Python `urllib` for it. Partial file downloads are resumed with
-  `Range`; a run that raises `IncompleteRead` is truncated, and only a clean read-to-EOF counts as
-  complete — never decide completeness by comparing to a **guessed** size.
-- **`insightface` raises `InvalidProtobuf` / `Protobuf parsing failed` on a model you never
-  asked for** — `FaceAnalysis` loads **every** `.onnx` in the pack directory; `allowed_modules`
-  does not stop the load. Put only the pieces you need in a separate pack dir (a minimal
-  `buffalo_l_min/` with `det_10g` + `w600k_r50` is enough for **detection + recognition**, i.e.
-  ArcFace identity similarity, without waiting for the big `1k3d68`). Also check the EP list:
-  this host's `onnxruntime 1.29.0` has **no CUDA provider**, so FaceID runs on CPU.
+ComfyUI 提交/加载、Blender 退出码、LoRA 串味、放大与云 API 的常见故障与排查顺序，见
+**`references/troubleshooting.md`**（每条都带"看到什么 → 查哪里"）。红线相关的两条留在上面
+「Safety gate」与「Cleaning up after a run」里，不在那份文档内。

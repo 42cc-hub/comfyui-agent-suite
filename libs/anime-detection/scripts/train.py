@@ -60,7 +60,8 @@ def main():
     try:
         from ultralytics import YOLO
     except ImportError:
-        raise SystemExit('还没装 ultralytics：见 docs/training.md 的安装命令（conda 环境 anime_det）')
+        raise SystemExit('还没装 ultralytics：用 sdenv 或 me2 环境跑（实测这两个都有 ultralytics 8.4.x；'
+                         'anime_det 里**没有** ultralytics，见 docs/training.md）')
 
     # batch 要传 int 给 DataLoader（float 会报 "batch_size should be a positive integer"）
     batch = -1 if str(a.batch).strip() in ('-1', 'auto') else int(float(a.batch))

@@ -155,3 +155,76 @@ LoadImage(放大后的图) → Canny(low 0.2, high 0.5) → AnimaLLLiteApply_sds
 **⚠ 一个工作流只留一个 `SaveImage`**：为了顺手看 canny 线稿而加第二个 `SaveImage`，会让
 `comfy_run` 把**二值线图**当成产出抓走（96 KB、清晰度 34.75 —— 看着像"突然变超清"，其实是线）。
 要看中间产物就单独跑一次。
+
+
+---
+
+## Upscaling (2x / 4x) — after generation, before delivery（自入口 SKILL.md 搬入 2026-10-13）
+
+> 来源：`SKILL.md` 的同名章节，2026-10-13 入口瘦身时**整段**搬来，正文未改（只调了标题层级与交叉引用）。
+
+
+Chain: **`UpscaleModelLoader` → `ImageUpscaleWithModel` → `SaveImage`**. No diffusion pass,
+so it is fast and deterministic — 1216×832 → 4864×3328 takes seconds, not minutes.
+Reference graph: `references/upscaling_workflow.json`. Model sources, the verified download
+URLs and the full comparison: **`references/upscaling.md`**.
+
+**Measured 2026-09-17** — same source, same 200×200 face crop, all four shown at 4×:
+
+| model | verdict |
+|---|---|
+| `4x-AnimeSharp.pth` | **best** — cleanest line art, hair strands separate, no sharpening halos. **Use as default.** |
+| `RealESRGAN_x4plus_anime_6B.pth` | good, marginally harder / more aggressive sharpening |
+| `4xhfa2kludvaeswinir_v1.safetensors` | general purpose, not anime-tuned |
+| `2x_AnimeJaNai_HD_V3_SuperUltraCompact.pth` | **REMOVED 2026-09-25** (moved to `agent_work/_disabled_upscalers/`) — it was **noticeably softer than either 4x model**, and using it was the actual cause of "upscale looks blurry" reports. Use `4x-AnimeSharp` then Lanczos-halve instead. |
+
+Rules:
+
+- **Install the model; don't blame the node.** A weak upscale almost always means a weak or
+  missing `.pth`, not that ComfyUI's upscaling is bad. The default install shipped with only
+  a 2x anime model and a general-purpose SwinIR, which is why it looked poor.
+- **Deliver at 2×.** 4× from a 1216-wide source is 4864 px / 16 MP. Keep the 4× result and
+  downscale it by 2 with LANCZOS — a 4×-then-downscale beats a native 2× model.
+- **Upscaling is not a substitute for framing.** If the subject is too small in frame, crop to
+  it first and upscale that, rather than enlarging the whole canvas.
+- **Only ESRGAN-architecture `.pth` loads in `UpscaleModelLoader`.** Real-CUGAN is a different
+  architecture and needs its own runtime (ncnn) — see `references/upscaling.md`.
+- **Fixing a few pixels inside a big image** is a different job from upscaling: cut the region
+  out with `SmartImageCrop`, repaint it, paste it back with `SmartImageStitcher`, and limit the
+  repaint with `SetLatentNoiseMask` on a **shaped** mask. Cost tracks the crop, not the canvas
+  (a 3328×4864 page took **44 s** against 80 s for its 832-wide source). Full playbook:
+  **`references/local_repaint_bigcanvas.md`**. Note the measured negative result there: the
+  "4x → shrink → 4x" chain does not work out, because the model's factor is fixed at 4x.
+  The same reference now also has the **no-custom-node route** (PIL crop → sample → paste by mask,
+  with the `LoadImage MASK = 1 − alpha` trap that turns a repaint into a silent no-op), the
+  `min-sample` rule for tiny targets, and when to **split one diagonal region into two passes**.
+  **The stitcher itself is bit-exact; the crop's *rescaling* is what moves pixels (2026-10-04, corrected).**
+  A previous note here claimed `SmartImageStitcher` "does not limit its change to the mask" (4.31 % out-of-mask,
+  `max Δ 83`, and attributed it to the stitcher + its feather). **That claim was wrong** — the user challenged it
+  (the node only cuts and pastes back) and the isolation experiment confirms it: with the crop **not rescaled**,
+  a pure passthrough (`crop_image → SmartImageStitcher`, **no sampler at all**) reproduces the original
+  **bit-for-bit** — out-of-mask `>2/255` = **0.0000 %**, `max Δ 0` — with `Box Feather 32` and with or without the
+  stitcher's `mask` input. The **full sampled** graph is bit-exact too once the crop is not rescaled and the mask is
+  wired (out-of-mask **0.0000 %**, `max Δ 0`, in-mask 62–73 % changed).
+  The drift comes from **`SmartImageCrop` resizing the crop** — `force_divisibility=128` / `min_resolution=768`
+  force a resize even with no sampling (measured 0.0542 % out-of-mask, `max Δ 46` just from crop→paste), and if the
+  stitcher's `mask` is *not* wired the whole crop box carries that difference (0.3352 %, `max Δ 229`).
+  So: **set `force_divisibility=8` (and a `min_resolution` the mask bbox already clears) so no resize happens, and
+  wire `crop_mask` into the stitcher's `mask`** — then either route is exactly 0 outside. Report `max Δ outside
+  mask` plus the `>2/255` percentage. Measurement script + raw numbers: this session's
+  `task/lumine_hospital_20261004/verify_stitcher.py` (cases P1–P7).
+
+### Shrinking to the delivery size, and proving sharpness
+
+- **Downscaling is part of the recipe, not an afterthought**: `ImageUpscaleWithModel` → `ImageScale`
+  (`lanczos`) to the target long side. Delivering the 4× output directly is 16 MP of no extra
+  information.
+- **A plain resize is not a substitute for the upscale model.** Same source, same target size
+  (3000 px long side): plain LANCZOS gives `|Laplacian|` mean **3.04** / P99 44; 4×-AnimeSharp then
+  Lanczos gives **5.17 / 94**, against the 2000 px original's 5.53 / 89 — i.e. the model preserves
+  the source's edge energy while a bare resize loses ~40 % of it.
+- **Score sharpness at the same pixel size, on the luminance channel**, using the 3×3 Laplacian's
+  mean absolute value and P99 . A
+  57 % gap is real; 5 % is noise. This is also how to settle "which upscaler" and "did my
+  re-sharpen pass help" without arguing from impressions.
+

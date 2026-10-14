@@ -194,3 +194,44 @@ The layout was built through ~10 numbered revisions, and most of the bugs came f
 * **Assert every substitution.** The one patch that did (`assert old in t`) succeeded first try.
 
 Verify a patch by its effect, never by its exit status.
+
+
+---
+
+## Comic page — tiling N panels into one page（自入口 SKILL.md 搬入 2026-10-13）
+
+> 来源：`SKILL.md` 的同名章节，2026-10-13 入口瘦身时**整段**搬来，正文未改（只调了标题层级与交叉引用）。
+
+
+When the deliverable is a **page** rather than separate images: one image, N cells, straight
+or slanted dividers, no white margin inside any cell, key content always visible, reading
+order preserved. Two scripts:
+
+| Script | Role |
+|---|---|
+| `libs/comic-layout/scripts/comic_layout.py` | layout search + renderer. `comic_layout.py OUT.png IMG... --page 1400x3200 --beam 12 --weights 1,0.6,1,0.6,1,1,1` |
+| `libs/comic-layout/scripts/letter_page.py` | balloon shapes, text-box search, anchor solving (imports `comic_layout`) |
+
+Design in one line: **recursively cut one convex cell with one straight line** — arbitrary
+angles become legal, the union stays exactly the page, and because a cut hands range
+`[lo..k]` to one side and `[k+1..hi]` to the other, reading order is structural. Each cell is
+then filled with a `cover`-scale crop of its image (so it can never letterbox) slid to keep
+that image's **key region** inside.
+
+Full playbook — the objective terms, the two ways of getting reading order wrong (pairwise
+ordering, and banding by vertical overlap), the blank-area probe, and the balloon geometry:
+**`references/comic_page_layout.md`**.
+
+Three things worth knowing before starting:
+
+- **Ask the human for two annotations, not one.** Key regions *and* balloon anchors are
+  semantic judgements — for a panel holding two people, tile statistics cannot say which is
+  which. `human_canvas` with a labelled contact sheet (or pre-seeded nodes the human only
+  drags) makes this cheap.
+- **Probe before changing a constraint.** The search left 13.8% blank against an 8% target;
+  raising the penalty 700x reached 7.7%, so it was a trade, not an infeasibility. Reworking
+  the constraints would have been wasted work.
+- **Every objective term is a normalised ratio**, so energy is comparable across page sizes
+  and sweeping them is meaningful — on a 7-panel set a 1:2.29 strip scored 8.26 against
+  14.95 for the next best, because portrait panels stack naturally on a tall page.
+

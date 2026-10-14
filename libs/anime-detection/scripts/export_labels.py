@@ -18,11 +18,12 @@ import shutil
 HERE = os.path.dirname(os.path.abspath(__file__))
 PROJ = os.path.dirname(HERE)
 DATA = os.path.join(PROJ, 'data')
-PRE = os.path.join(DATA, 'prelabel')
+PRE = os.environ.get('ADS_PRE') or os.path.join(DATA, 'prelabel')   # 换预标注源（如 prelabel_face = 面点用 detection 修正过）
+GT = os.path.join(DATA, 'pose_gt')      # 人工校准过的骨架真值（scripts/label_pose.py 写出），有则优先
 CROPS = os.environ.get('ADS_CROPS') or os.path.join(DATA, 'crops_todo')   # 换裁图目录做 A/B（如 crops_m30）
 CLS = os.environ.get('ADS_CLS') or os.path.join(DATA, 'cls')
 QUEUE = os.environ.get('ADS_QUEUE') or os.path.join(DATA, 'cls_queue')   # 换队列（如主动学习挑出的 mined 队列）
-LBL = os.path.join(DATA, 'labels')
+LBL = os.environ.get('ADS_LBL') or os.path.join(DATA, 'labels')          # 换标签输出目录（半监督那套写 labels_semi/）
 META = os.path.join(DATA, 'meta')
 
 DET_CLASSES = ['person', 'hand', 'foot', 'head']       # M2a 本体（chest/hip 暂无来源，见 README）
@@ -98,15 +99,27 @@ COCO17_NAMES = ['nose', 'left_eye', 'right_eye', 'left_ear', 'right_ear', 'left_
 COCO17_FLIP = [0, 2, 1, 4, 3, 6, 5, 8, 7, 10, 9, 12, 11, 14, 13, 16, 15]
 
 
-def export_pose_coco17(min_vis_pts=10):
-    """再导一份 **COCO-17** 的骨架标签（给 yolo11n-pose 的预训练头用）。"""
+def export_pose_coco17(min_vis_pts=7):
+    """再导一份 **COCO-17** 的骨架标签（给 yolo11n-pose 的预训练头用）。
+
+    `min_vis_pts` 从 10 降到 7：这个门槛算的是"可信点个数"，而面点自 2026-10-13 起只保留 M2b 真检出的眼
+    （其余置 vis=0，见 .runtime/prelabel_face_synth.py）。可信点分母从 18 掉到 13，10/18=0.56 对应的
+    等价门槛是 0.56×13≈7。实测：面点不计入后仍用 10 会丢 476/1416 个实例，用 7 丢 263 个，
+    而被丢的实例平均 prob 和保留的差不多（0.54 vs 0.55）—— 说明它们多是"人只露一半"而不是 dwpose 垃圾，
+    真正的垃圾（28 个 0 点 chain）在任何门槛下都被丢掉。
+    """
     out = os.path.join(LBL, 'pose', 'body17')
     os.makedirs(out, exist_ok=True)
-    n_img = n_inst = n_drop = 0
+    n_img = n_inst = n_drop = n_gt = 0
     for fn in sorted(os.listdir(PRE)):
         if not fn.endswith('.json'):
             continue
-        rec = json.load(io.open(os.path.join(PRE, fn), encoding='utf-8'))
+        src = os.path.join(GT, fn)                          # 人校准过的真值优先，其余用 dwpose 预标注
+        if os.path.exists(src):
+            n_gt += 1
+        else:
+            src = os.path.join(PRE, fn)
+        rec = json.load(io.open(src, encoding='utf-8'))
         iw, ih = [int(v) for v in rec['size'].split('x')]
         by_chain = {}
         for pt in rec['points']:
@@ -135,7 +148,8 @@ def export_pose_coco17(min_vis_pts=10):
         n_img += 1
     with io.open(os.path.join(out, 'pose_config.txt'), 'w', encoding='utf-8') as fh:
         fh.write('kpt_shape: [17, 3]\nflip_idx: %s\nkpt_names: %s\n' % (COCO17_FLIP, COCO17_NAMES))
-    print('pose/body17(COCO-17): %d 张 / %d 实例（丢弃 %d 个低置信实例）' % (n_img, n_inst, n_drop))
+    print('pose/body17(COCO-17): %d 张 / %d 实例（丢弃 %d 个低置信实例；其中 %d 张用人工校准真值）'
+          % (n_img, n_inst, n_drop, n_gt))
 
 
 def export_pose(min_vis_pts=12, min_conf=0.5):
@@ -143,15 +157,22 @@ def export_pose(min_vis_pts=12, min_conf=0.5):
 
     `min_vis_pts`：**只要"高置信点够多"的实例**。先前是 6，实测 60 epoch 后关键点 mAP50 只有 0.01
     ⇒ 怀疑是自动标注（dwpose）噪声太大、监督自相矛盾；这里把门槛提到 12 个点 vis≥1 做对照实验。
+    注意：面点自 2026-10-13 起不再计入可信点（见 export_pose_coco17），这条 18 点流程若要重跑，
+    等价门槛是 9 而不是 12 —— 这里没动，因为它不参与当前的姿态实验。
     """
     out = os.path.join(LBL, 'pose', 'body')
     os.makedirs(out, exist_ok=True)
     cfg = os.path.join(out, 'pose_config.txt')
-    n_img = n_inst = n_drop = 0
+    n_img = n_inst = n_drop = n_gt = 0
     for fn in sorted(os.listdir(PRE)):
         if not fn.endswith('.json'):
             continue
-        rec = json.load(io.open(os.path.join(PRE, fn), encoding='utf-8'))
+        src = os.path.join(GT, fn)                          # 同上：人工真值优先
+        if os.path.exists(src):
+            n_gt += 1
+        else:
+            src = os.path.join(PRE, fn)
+        rec = json.load(io.open(src, encoding='utf-8'))
         iw, ih = [int(v) for v in rec['size'].split('x')]
         by_chain = {}
         for pt in rec['points']:
@@ -184,8 +205,8 @@ def export_pose(min_vis_pts=12, min_conf=0.5):
     with io.open(cfg, 'w', encoding='utf-8') as fh:
         fh.write('kpt_shape: [%d, 3]\nflip_idx: %s\nkpt_names: %s\n' %
                  (len(BODY18), list(range(len(BODY18))), BODY18))
-    print('pose/body: %d 张 / %d 个实例（丢弃 %d 个低置信实例；kpt_shape=[%d,3]）'
-          % (n_img, n_inst, n_drop, len(BODY18)))
+    print('pose/body: %d 张 / %d 个实例（丢弃 %d 个低置信实例；kpt_shape=[%d,3]；其中 %d 张用人工校准真值）'
+          % (n_img, n_inst, n_drop, len(BODY18), n_gt))
 
 
 def _augment(im, k):

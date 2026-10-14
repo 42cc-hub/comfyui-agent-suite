@@ -93,6 +93,14 @@ GROUPS = {
     'G14': dict(  # 收尾：全部人工数据入库后（85 个标签文件）的最终复核
         split=50, seeds=[0, 1, 2],
         confs={'rot20': ['--rot', '20']}),
+    'C1': dict(  # 路线 C1：Swin-T（分层 attention）替换 resnet18（判据见 docs/rope_C_prereg.md）
+        split=50, seeds=[0, 1, 2],
+        confs={'swin_t': ['--rot', '20', '--encoder', 'swin_t', '--freeze-enc', '0',
+                          '--enc-lr-scale', '0.1']}),
+    'C2': dict(  # 路线 C2：ViT-B/16 冻结 + 薄解码器（位置编码固定 224 ⇒ --tile 224）
+        split=50, seeds=[0, 1, 2],
+        confs={'vit_b_16_frz': ['--rot', '20', '--encoder', 'vit_b_16', '--freeze-enc', '1',
+                                '--tile', '224']}),
 }
 
 # 折外阈值验证（主 agent 要求）走单独脚本，队列照用 `--group G8`

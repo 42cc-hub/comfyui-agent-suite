@@ -41,8 +41,12 @@ let done = false, hist;
 for (let i = 0; i < 150; i++) {
   hist = await j('GET', '/history/' + pid);
   const rec = hist[pid];
-  if (rec && rec.outputs && Object.keys(rec.outputs).length) { done = true; break; }
+  // 报错要先判：否则"跑到一半失败"会被下面的完成判定误当成"跑完了但没图"
   if (rec && rec.status && rec.status.status_str === 'error') { console.error('gen error ' + JSON.stringify(rec.status)); process.exit(3); }
+  // 完成 = **有图**。有些节点只有纯 UI 输出（如 OpenposePreprocessor 的 openpose_json），
+  // 按"outputs 非空"判完成会提前跳出，然后死在 no image in outputs（2026-10-15 踩到）。
+  const outs = (rec && rec.outputs) || {};
+  if (Object.values(outs).some((o) => o.images && o.images.length)) { done = true; break; }
   await new Promise((r) => setTimeout(r, 2000));
 }
 if (!done) { console.error('not done in time'); process.exit(4); }

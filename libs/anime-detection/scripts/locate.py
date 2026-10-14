@@ -54,6 +54,17 @@ def vis_of(score):
 DEF_POSE = [os.path.join(PROJ, 'runs', 'm1_pose_coco17', 'weights', 'best.pt'),
             os.path.join(PROJ, 'runs', 'm1_pose17_1129', 'weights', 'best.pt')]
 # v4：val 关键点 0.349，交付图漏 test6；新版：val 0.835，交付图漏 test5 ⇒ **两个都保留、按"检出人多的"取优**
+# ⚠️ 上面两个是 **回落**。M1 现在的首选是下面这个微调 ViTPose（2026-10-13 起）：
+DEF_VITPOSE = os.path.join(PROJ, 'models', 'vitpose_ft_v6_labelbox_honly')
+# 固定 15 张报告集（279 个关节，**从不参与训练/选点**）配对聚类 bootstrap 实测：
+#   ViTPose-ft v6  coverage 88% / median 23.1px / common 23.7 / p90 97.8
+#   YOLO-pose      coverage 71% / median 66.0px / common 65.6 / p90 341.6
+#   dwpose         coverage 52% / median 26.2px / common 25.4 / p90 224.0
+#   配对差 v6−dwpose：median −2.0px [−22.0, +14.1] ⇒ **无差别**；mean −31.8px [−53.3, −11.0] p=0.0004 ⇒ **显著**
+#   （median 已到"人工重标同一张图"的噪声尺度：现 GT vs 旧 GT 中位 16.0px ⇒ 再压 median 收益极小，
+#    换它是为了**覆盖率 + 尾部**：p90 从 224/342 收到 98）
+# 口径：top-down，吃 M2a 的 `person` 框（与 prelabel_vitpose.py / 训练评测同口径）；坐标/名字与 YOLO 分支一致
+# （COCO-17 全名 + `vis∈{0,1,2}`），所以 check_parts.py 的骨架掩版、脚召回兜底、M3 脚裁图都不用改。
 DEF_DET = os.path.join(PROJ, 'runs', 'm2a_det_996img_960', 'weights', 'best.pt')
 # 996 张版（2.46h；**确认训练进程退出后**才敢验收）：person 0.984 / hand 0.914 / foot 0.694 / head 0.978
 # 308 张版是 0.882 / 0.750 / 0.577 / 0.899 ⇒ 数据翻 3 倍的收益
@@ -126,7 +137,14 @@ def main():
     ap.add_argument('--src', nargs='+', required=True)
     ap.add_argument('--out', required=True)
     ap.add_argument('--pose-weights', nargs='+', default=DEF_POSE,
-                    help='可给多个 pose 权重：**取检出人多的那个**。实测 v4 漏 test6、新版漏 test5，取优后 8/8')
+                    help='可给多个 pose 权重：**取检出人多的那个**。实测 v4 漏 test6、新版漏 test5，取优后 8/8。'
+                         '⚠️ 只在 ViTPose（默认）不可用或被 --no-vitpose 关掉时才走这里')
+    ap.add_argument('--vitpose-dir', default=DEF_VITPOSE,
+                    help='微调后的 ViTPose（HF 目录：config.json + preprocessor_config.json + 权重）。'
+                         '**默认存在就优先用它当 M1**（见文件头 DEF_VITPOSE 处的实测数字）；'
+                         '目录不存在或传 --no-vitpose 时回落到 --pose-weights → dwpose')
+    ap.add_argument('--no-vitpose', dest='vitpose_dir', action='store_const', const=None,
+                    help='关掉 ViTPose，M1 回到 YOLO-pose 双权重取优')
     ap.add_argument('--det-weights', default=DEF_DET)
     ap.add_argument('--foot-weights', default=DEF_FOOT,
                     help='专用脚检测器（单类）。与 4 类模型**取并集**：实测它能把 4 类漏掉的 test1 脚找回来')
@@ -177,6 +195,21 @@ def main():
             if w and os.path.exists(w):
                 pose_models.append(YOLO(w))
     pose_model = pose_models[0] if pose_models else None
+    # ViTPose 微调权重：M1 的首选。加载失败/目录缺失一律**静默回落**，不让整条链挂掉
+    vitpose = None
+    if a.vitpose_dir and os.path.isdir(a.vitpose_dir):
+        try:
+            import torch
+            from transformers import VitPoseForPoseEstimation, VitPoseImageProcessor
+            _vp_proc = VitPoseImageProcessor.from_pretrained(a.vitpose_dir)
+            _vp_model = VitPoseForPoseEstimation.from_pretrained(a.vitpose_dir).eval()
+            _vp_dev = 'cuda' if torch.cuda.is_available() else 'cpu'
+            _vp_model.to(_vp_dev)
+            vitpose = (_vp_proc, _vp_model, _vp_dev)
+        except Exception as e:
+            print('ViTPose 不可用（%s）⇒ M1 回落 YOLO-pose/dwpose' % str(e)[:120])
+    elif a.vitpose_dir:
+        print('ViTPose 目录不存在（%s）⇒ M1 回落 YOLO-pose/dwpose' % a.vitpose_dir)
     det_model = YOLO(a.det_weights) if (YOLO and os.path.exists(a.det_weights)) else None
     m3_models = []
     if YOLO:
@@ -198,7 +231,7 @@ def main():
             _m.task = 'detect'
 
     dwpose_estimate = None
-    if pose_model is None:
+    if vitpose is None and pose_model is None:
         try:
             from imgutils.pose import dwpose_estimate
         except ImportError:
@@ -228,8 +261,51 @@ def main():
             rec = {'image': os.path.basename(path), 'size': '%dx%d' % (w, h), 'chain': [],
                    'points': [], 'boxes': [], 'flags': []}
 
+            # ---- M2a det 提前：ViTPose 是 top-down，要吃 person 框，而 M2a 的框原本在 M1 之后才算 ----
+            # 只跑一次 det，M1（ViTPose）与下面 M2a 共用同一份结果 ⇒ 不增加耗时
+            det_boxes, det_r = [], None
+            if det_model is not None:
+                try:
+                    det_r = det_model.predict(path, conf=a.conf, imgsz=a.imgsz, verbose=False)[0]
+                    det_boxes = [{'layer': 'M2a', 'cls': det_r.names[int(b.cls[0])],
+                                  'box': [round(v, 1) for v in b.xyxy[0].tolist()],
+                                  'prob': round(float(b.conf[0]), 3)} for b in (det_r.boxes or [])]
+                except Exception as e:
+                    rec['flags'].append({'type': 'det_error', 'detail': str(e)[:80]})
+
             # ---- M1 骨架 ----
-            if pose_models:
+            vit_pts = []
+            if vitpose is not None:
+                pboxes = [b['box'] for b in det_boxes if b['cls'] == 'person']
+                if pboxes:
+                    try:
+                        _vproc, _vmodel, _vdev = vitpose
+                        import torch
+                        with torch.no_grad():
+                            _vin = _vproc(images=img, boxes=[pboxes], return_tensors='pt')
+                            _vin = {k: (v.to(_vdev) if hasattr(v, 'to') else v) for k, v in _vin.items()}
+                            _vout = _vmodel(**_vin)
+                        _vres = _vproc.post_process_pose_estimation(_vout, boxes=[pboxes])
+                        for pi, inst in enumerate(_vres[0]):
+                            xy = inst['keypoints'].cpu().numpy()
+                            sc = inst['scores'].cpu().numpy()
+                            for j, cname in enumerate(COCO17_NAMES):
+                                s = float(sc[j])
+                                vit_pts.append({'layer': 'M1', 'chain': 'M1#%d' % pi,
+                                                'name': 'body.%s' % cname, 'cls': 'body',
+                                                'x': round(float(xy[j][0]), 1), 'y': round(float(xy[j][1]), 1),
+                                                'prob': round(s, 3), 'vis': vis_of(s),
+                                                'src': 'ViTPose-ft'})
+                        rec['chain'].append('M1.vitpose')
+                        rec['vitpose'] = os.path.basename(os.path.normpath(a.vitpose_dir))
+                        rec['n_people'] = len(_vres[0])
+                    except Exception as e:
+                        rec['flags'].append({'type': 'vitpose_error', 'detail': str(e)[:80]})
+                        vit_pts = []
+
+            if vit_pts:
+                rec['points'] += vit_pts
+            elif pose_models:
                 # 多权重取优：跑全部，用"检出人最多"的那个（实测能把 7/8 补成 8/8）
                 best = None
                 for _pm in pose_models:
@@ -269,13 +345,7 @@ def main():
 
             # ---- M2a 身体组 ----
             if det_model is not None:
-                r = det_model.predict(path, conf=a.conf, imgsz=a.imgsz, verbose=False)[0]
-                names = r.names
-                for b in (r.boxes or []):
-                    cls = names[int(b.cls[0])]
-                    rec['boxes'].append({'layer': 'M2a', 'cls': cls,
-                                         'box': [round(v, 1) for v in b.xyxy[0].tolist()],
-                                         'prob': round(float(b.conf[0]), 3)})
+                rec['boxes'] += det_boxes
                 rec['chain'].append('M2a.ours')
             elif detect_person is None:
                 rec['flags'].append({'type': 'det_unavailable', 'detail': '既无我们的 det 权重也无 imgutils'})

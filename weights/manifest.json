@@ -1,6 +1,6 @@
 {
   "schema": 1,
-  "note": "权重不打进仓库，走 Release 下载：python skill/scripts/fetch_weights.py --from-release 42cc-hub/comfyui-agent-suite@weights-v1",
+  "note": "权重不打进仓库，走 Release 下载：python skill/scripts/fetch_weights.py --from-release 42cc-hub/comfyui-agent-suite@weights-v2",
   "weights": [
     {
       "name": "m2b_face4_v3_rot60_s20261013",
@@ -142,6 +142,65 @@
       "file": "m1_pose17_1129.best.pt",
       "size": 6063240,
       "sha256": "9638f881b7a68ea58351e4164749a3e9196d5d77cb24c3d8820ef53cc88afe62"
+    },
+    {
+      "name": "m1_pose_vitpose_ft_v6",
+      "task": "m1_pose_vitpose",
+      "kind": "hf_dir",
+      "desc": "M1 骨架**首选**：在人工标注上微调的 ViTPose（top-down，吃 M2a 的 person 框）",
+      "config": "HF 目录（config.json + preprocessor_config.json + model.safetensors）；ViTPose-B 主干，192×256；基座 usyd-community/vitpose-base-simple",
+      "metrics": {
+        "报告集_median_px": 23.1,
+        "报告集_p90_px": 97.8,
+        "报告集_覆盖率": "88%",
+        "报告集_公共子集中位": 23.7,
+        "对照_dwpose": "median 26.2 / p90 224.0 / 覆盖 52%",
+        "对照_yolo_pose": "median 70.5 / p90 335.0 / 覆盖 89%",
+        "配对聚类bootstrap_vs_dwpose": "median −2.0px [−22.0,+14.1] 无差别；mean −31.8px [−53.3,−11.0] 显著(p=4e-4)",
+        "面点逐关节中位": "nose 14.1 / l_eye 11.2 / r_eye 13.2 / l_ear 19.7 / r_ear 22.8（dwpose 只报两只眼）",
+        "训练口径": "188 张人工骨架 / 260 实例 ×5，box=label 自身外接框，rot12 + color0.10，face 权重 3×",
+        "复现": "docs/pose_m1_status.md"
+      },
+      "dest": "models/vitpose_ft_v6_labelbox_honly",
+      "files": [
+        {
+          "file": "m1_pose_vitpose_ft_v6.config.json",
+          "as": "config.json",
+          "size": 2648,
+          "sha256": "8228fadd02bab2c47e601c3cee94772b2528bf5449a5448773853dcc283b7880"
+        },
+        {
+          "file": "m1_pose_vitpose_ft_v6.preprocessor_config.json",
+          "as": "preprocessor_config.json",
+          "size": 385,
+          "sha256": "577e9e1c76ad7f923a6b3a58bdf74ef24b622df711f3bb451faba7242e2c322d"
+        },
+        {
+          "file": "m1_pose_vitpose_ft_v6.model.safetensors",
+          "as": "model.safetensors",
+          "size": 343673076,
+          "sha256": "ba6e46c78d77acd6521691bbb54b1672a6344437e1d60e0bc3ff33237491f7c4"
+        }
+      ],
+      "size": 343676109
+    },
+    {
+      "name": "m4_rope_g14",
+      "task": "m4_rope",
+      "desc": "M4 绳子 mask：resnet18 不冻结 + RGB + ±20° 旋转，79 张人工标注训练",
+      "config": "thr 0.90 / tile 256 / in_mode rgb（阈值存在权重里，--conf 可覆盖）；另有不依赖 torch 的 MLP 兜底 rope_mlp_k9_4img.npz（仓库自带，不在本清单）",
+      "metrics": {
+        "留出_s01-s05_3seed_F1": "0.9277±0.0117",
+        "交付_seed0_F1": 0.9178,
+        "留出_召回": 0.9812,
+        "留出_笔数": "340（误检块 294 + 漏检段 46）",
+        "对照_旧30图版": "F1 0.848 / 召回 0.838 / 笔数 298（182+116）"
+      },
+      "file": "m4_rope_g14.pt",
+      "as": "rope_unet_resnet18_g14.pt",
+      "dest": "data/masks/rope/weights",
+      "size": 45959643,
+      "sha256": "22c6bb8b38474c534a626cdf006bce592163cc31a3dcedb36e240fa6e0165dcf"
     }
   ]
 }

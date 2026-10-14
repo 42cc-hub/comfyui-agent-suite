@@ -132,6 +132,35 @@ def widen_first_conv(conv, in_ch):
     return new
 
 
+
+class _ViTSeq(nn.Module):
+    """torchvision ViT：预处理成 token 序列 → 逐层 encoder block（供 PreEnc 挂 hook 取中间特征）。"""
+
+    def __init__(self, m):
+        super().__init__()
+        self.m = m
+
+    def forward(self, x):
+        m = self.m
+        # 自己做 patch embedding，绕开 torchvision `_process_input` 里"必须 224"的 assert
+        z = m.conv_proj(x).flatten(2).transpose(1, 2)          # (B,N,C)
+        b, n, c = z.shape
+        pos = m.encoder.pos_embedding
+        if pos.shape[1] != n + 1:                              # 位置编码插值到目标网格
+            g_old = int(round((pos.shape[1] - 1) ** 0.5))
+            g_new = int(round(n ** 0.5))
+            cls_pe, grid = pos[:, :1], pos[:, 1:]
+            grid = grid.reshape(1, g_old, g_old, c).permute(0, 3, 1, 2)
+            grid = F.interpolate(grid, size=(g_new, g_new), mode='bilinear', align_corners=False)
+            grid = grid.permute(0, 2, 3, 1).reshape(1, g_new * g_new, c)
+            pos = torch.cat([cls_pe, grid], 1)
+        z = torch.cat([m.class_token.expand(b, -1, -1), z], 1) + pos
+        z = m.encoder.dropout(z)
+        for layer in m.encoder.layers:
+            z = layer(z)
+        return z
+
+
 class PreEnc(nn.Module):
     """预训练骨干 → 返回 stride 8/16/32 三档特征（可选带 stride 4）。
 
@@ -166,6 +195,25 @@ class PreEnc(nn.Module):
             self.body = m.features
             self.layers = list(self.body)
             self.tap_idx = None               # 按分辨率自动找
+        elif kind == 'swin_t':
+            import torchvision
+            m = torchvision.models.swin_t(weights='IMAGENET1K_V1')
+            if in_ch != 3:
+                m.features[0][0] = widen_first_conv(m.features[0][0], in_ch)
+            self.body = m.features
+            self.layers = list(m.features)
+            self.tap_idx = None               # 分层特征，按分辨率自动找（输出是 NHWC，读取时转换）
+            self.patch = 4
+        elif kind == 'vit_b_16':
+            import torchvision
+            m = torchvision.models.vit_b_16(weights='IMAGENET1K_V1')
+            if in_ch != 3:
+                raise ValueError('vit_b_16 不支持多通道输入')
+            self.body = _ViTSeq(m)             # 预处理 + 逐层 encoder block（token 序列）
+            self.layers = list(m.encoder.layers)
+            # 单尺度（stride 16）：取最后三层当三档"伪尺度"，解码器照样能上采样相加
+            self.tap_idx = [9, 10, 11]
+            self.patch = 16
         elif kind == 'yolo11n_seg':
             if in_ch != 3:
                 raise ValueError('yolo11n_seg 骨干暂不支持多通道输入（第一层被 ultralytics 多处引用）')
@@ -185,6 +233,27 @@ class PreEnc(nn.Module):
             raise ValueError('未知 encoder: %s' % kind)
         self._feats = {}
 
+
+    def _to_nchw(self, t):
+        """把不同主干的特征统一成 NCHW：Swin 是 NHWC；ViT 是 (B,N,C) token 序列。"""
+        if not torch.is_tensor(t):
+            return None
+        if t.dim() == 3:                      # (B, N, C) → 去掉 CLS，reshape 回二维
+            p = getattr(self, 'patch', 16)
+            h, w = getattr(self, '_in_hw', (0, 0))
+            hh, ww = h // p, w // p
+            t = t[:, 1:] if t.shape[1] == hh * ww + 1 else t
+            if hh * ww != t.shape[1]:
+                return None
+            return t.reshape(t.shape[0], hh, ww, t.shape[2]).permute(0, 3, 1, 2).contiguous()
+        # Swin 的 features 恒为 NHWC：**必须按主干判断**，不能靠"最后一维更大"的启发式——
+        # 512 瓦片时 stride-4 特征图是 128×128×96，空间尺寸比通道数还大，启发式会漏判（C1 第一次就栽在这）。
+        if getattr(self, 'kind', '') == 'swin_t' and t.dim() == 4:
+            return t.permute(0, 3, 1, 2).contiguous()
+        if t.dim() == 4 and t.shape[-1] > t.shape[1]:      # 其它主干的兜底启发式
+            return t.permute(0, 3, 1, 2).contiguous()
+        return t
+
     def _find_taps(self, h, w):
         """跑一次 dummy 前向，按输出分辨率挑出 H/8,H/16,H/32 三档（取通道数最多的那层）。"""
         self._feats = {}
@@ -193,6 +262,7 @@ class PreEnc(nn.Module):
         for i, layer in enumerate(self.layers):
             hs.append(layer.register_forward_hook(
                 lambda mod, inp, out, idx=i: self._feats.__setitem__(idx, out)))
+        self._in_hw = (h, w)
         with torch.no_grad():
             dev = next(self.parameters()).device
             _ = self.body(torch.zeros(1, self.in_ch, h, w, device=dev))
@@ -201,6 +271,7 @@ class PreEnc(nn.Module):
         # 不看 stride，只看"分辨率最大的三档"（同尺寸取通道最多的层），从深到浅排序
         cand = {}
         for i, t in self._feats.items():
+            t = self._to_nchw(t)
             if isinstance(t, (list, tuple)):
                 t = next((z for z in t if torch.is_tensor(z) and z.dim() == 4), None)
             if t is None or not torch.is_tensor(t) or t.dim() != 4:
@@ -217,10 +288,11 @@ class PreEnc(nn.Module):
         return [cand[k] for k in sizes]                   # [最浅, ..., 最深]（尺寸降序）
 
     def forward(self, x):
+        self._in_hw = (x.shape[-2], x.shape[-1])
         if self.tap_idx is None:
             h, w = max(32, x.shape[-2] // 32 * 32), max(32, x.shape[-1] // 32 * 32)
             self.tap_idx = self._find_taps(h, w)
-        if self.kind == 'yolo11n_seg':
+        if self.kind in ('yolo11n_seg', 'vit_b_16'):
             # ultralytics 的 layer 是"整段 list 进 list 出"，逐层喂单个张量会炸（cat 需要 tuple）
             feats, hs = {}, []
             for i in self.tap_idx:
@@ -233,7 +305,8 @@ class PreEnc(nn.Module):
             for i in self.tap_idx:
                 t = feats[i]
                 if isinstance(t, (list, tuple)):
-                    t = next(z for z in t if torch.is_tensor(z) and z.dim() == 4)
+                    t = next(z for z in t if torch.is_tensor(z))
+                t = self._to_nchw(t)          # ViT 的 token 序列也在这里转成 NCHW
                 out.append(t)
             return out
         feats = {}
@@ -241,7 +314,7 @@ class PreEnc(nn.Module):
             x = layer(x)
             if i in self.tap_idx:
                 feats[i] = x if torch.is_tensor(x) else x[0]
-        return [feats[i] for i in self.tap_idx]
+        return [self._to_nchw(feats[i]) for i in self.tap_idx]
 
 
 class UNetPre(nn.Module):
@@ -253,7 +326,8 @@ class UNetPre(nn.Module):
         with torch.no_grad():                 # 探一次通道数
             dev = 'cuda' if torch.cuda.is_available() else 'cpu'
             self.enc.to(dev)
-            cs = [f.shape[1] for f in self.enc(torch.zeros(1, in_ch, 256, 256, device=dev))]
+            ps = 224 if kind == 'vit_b_16' else 256   # ViT-B/16 的位置编码固定 224，探针也用 224
+            cs = [f.shape[1] for f in self.enc(torch.zeros(1, in_ch, ps, ps, device=dev))]
             self.enc.to('cpu')
         self.n_tap = len(cs)
         self.proj = nn.ModuleList([nn.Conv2d(c, mid, 1) for c in cs])
@@ -766,7 +840,8 @@ def main():
                     help='用全部标注训一个模型并导出到 --weights（交付用，不做 LOO）')
     ap.add_argument('--mid', type=int, default=128, help='decoder mid channels')
     ap.add_argument('--encoder', default='scratch',
-                    choices=['scratch', 'resnet18', 'mobilenet_v3_small', 'yolo11n_seg'],
+                    choices=['scratch', 'resnet18', 'mobilenet_v3_small', 'yolo11n_seg',
+                             'swin_t', 'vit_b_16'],
                     help='预训练骨干做输入头（用户思路：单类单 mask 不需要整套 YOLO-seg）')
     ap.add_argument('--freeze-enc', type=int, default=1, help='1=冻结骨干只训解码器')
     ap.add_argument('--enc-lr-scale', type=float, default=0.1, help='不冻结时骨干的学习率倍率')
@@ -929,6 +1004,7 @@ def main():
         if (not disjoint) or fold == folds[0][0]:
             torch.save({'sd': model.state_dict(), 'base': a.base, 'thr': thr, 'tile': a.tile,
                         'loss': a.loss, 'unsup_w': a.unsup_w, 'ul_n': a.ul_n,
+                        'encoder': a.encoder, 'mid': a.mid,      # 交付/复现都需要，别再靠反推
                         'in_mode': a.in_mode, 'in_ch': 6 if a.in_mode == 'hsvrgb' else 3},
                        os.path.join(a.weights,
                                     'rope_unet_%s_%s.pt' % (os.path.basename(a.out.rstrip(os.sep)),

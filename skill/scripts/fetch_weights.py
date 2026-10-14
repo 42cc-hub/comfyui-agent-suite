@@ -6,12 +6,16 @@
   2. `--from-release <owner/repo@tag>`：从 GitHub Release 附件下（默认读环境变量 `SUITE_RELEASE`）；
   3. 都不可用时打印清单并退出，让人自己下（脚本不静默失败）。
 
-落到 `<repo>/runs/<name>/weights/best.pt` —— 与套件里 `locate.py` 等脚本的默认路径一致。
+两种条目形态：
+  * 单文件（默认）：落到 `<libs/anime-detection>/runs/<name>/weights/best.pt`，与 `locate.py` 等脚本的默认路径一致；
+  * **目录型**（`"files": [...]`，例如微调的 ViTPose，是一整个 HF 目录）：逐文件落到
+    `<libs/anime-detection>/<dest>/<as>`；`as` 是写盘文件名（Release 附件名是 `file`，两者刻意分开，
+    否则 `config.json` 这种通用名在同一个 Release 里会撞名）。
 
 用法：
     python fetch_weights.py --list
     python fetch_weights.py --from-dir D:/my_runs
-    python fetch_weights.py --from-release 42cc-hub/comfyui-agent-suite@weights-v1
+    python fetch_weights.py --from-release 42cc-hub/comfyui-agent-suite@weights-v2
 """
 import argparse
 import hashlib
@@ -43,8 +47,33 @@ def sha256(path):
     return h.hexdigest()
 
 
-def target(name):
+def target(name, w=None):
+    """写盘路径：目录型条目看 `dest`/`as`，单文件条目固定落在 runs/<name>/weights/best.pt。"""
+    if w and w.get('dest'):
+        return os.path.join(LIB, w['dest'].replace('/', os.sep), w.get('as') or w['file'])
     return os.path.join(LIB, 'runs', name, 'weights', 'best.pt')
+
+
+def entries(w):
+    """把一条清单统一成 [(附件名, 写盘路径, size, sha256)]，屏蔽"单文件 / 目录型"的差别。"""
+    if w.get('files'):
+        return [(f['file'], target(w['name'], dict(w, **{'as': f.get('as') or f['file']})),
+                 f.get('size'), f['sha256']) for f in w['files']]
+    return [(w['file'], target(w['name'], w), w.get('size'), w['sha256'])]
+
+
+def local_cands(from_dir, w, asset, dst):
+    """`--from-dir` 的查找顺序：**先按仓库里的相对位置**（from_dir = 套件根目录即可），
+    再退回"平坦的 runs 目录"（自己训练完的人多半是这种）。"""
+    base = os.path.basename(dst)
+    if w.get('dest'):
+        return [os.path.join(from_dir, w['dest'].replace('/', os.sep), base),
+                os.path.join(from_dir, base),
+                os.path.join(from_dir, w['name'], base)]
+    return [os.path.join(from_dir, 'runs', w['name'], 'weights', 'best.pt'),
+            os.path.join(from_dir, asset),
+            os.path.join(from_dir, base),
+            os.path.join(from_dir, w['name'], 'weights', 'best.pt')]
 
 
 def main():
@@ -61,49 +90,54 @@ def main():
     items = [w for w in man['weights'] if not a.only or w['name'] in a.only]
 
     if a.list:
-        print('%-34s %-12s %8s  %s' % ('name', 'task', 'size', 'desc'))
+        print('%-34s %-16s %8s  %s' % ('name', 'task', 'size', 'desc'))
         for w in items:
-            print('%-34s %-12s %7.1fM  %s' % (w['name'], w['task'], w['size'] / 1e6, w['desc']))
+            print('%-34s %-16s %7.1fM  %s' % (w['name'], w['task'], w['size'] / 1e6, w['desc']))
         print('\n共 %d 个，%.1f MB' % (len(items), sum(w['size'] for w in items) / 1e6))
         return 0
 
     ok = miss = 0
     for w in items:
-        dst = target(w['name'])
-        if os.path.exists(dst) and sha256(dst) == w['sha256']:
+        todo = entries(w)
+        if all(os.path.exists(p) and sha256(p) == h for _f, p, _s, h in todo):
             print('✓ 已存在且校验一致：%s' % w['name'])
             ok += 1
             continue
-        os.makedirs(os.path.dirname(dst), exist_ok=True)
-        got = False
-        if a.from_dir:
-            src = os.path.join(a.from_dir, w['file'])
-            if not os.path.exists(src):
-                src = os.path.join(a.from_dir, w['name'], 'weights', 'best.pt')
-            if os.path.exists(src):
-                import shutil
-                shutil.copy2(src, dst)
-                got = True
-        if not got and a.from_release:
-            import urllib.request
-            url = 'https://github.com/%s/releases/download/%s/%s' % (
-                a.from_release.split('@')[0], a.from_release.split('@')[-1], w['file'])
-            print('下载 %s' % url)
-            try:
-                urllib.request.urlretrieve(url, dst)
-                got = True
-            except Exception as e:                              # noqa: BLE001
-                print('  失败：%s' % e)
-        if not got:
-            miss += 1
-            print('✗ 没拿到 %s（用 --from-dir 指向你的 runs 目录，或 --from-release owner/repo@tag）' % w['name'])
-            continue
-        h = sha256(dst)
-        if h != w['sha256']:
-            print('⚠ %s 校验不一致（文件已留在 %s，请核对来源）' % (w['name'], dst))
-        else:
-            print('✓ %s' % w['name'])
+        got_all = True
+        for asset, dst, _size, want in todo:
+            if os.path.exists(dst) and sha256(dst) == want:
+                continue
+            os.makedirs(os.path.dirname(dst), exist_ok=True)
+            got = False
+            if a.from_dir:
+                for cand in local_cands(a.from_dir, w, asset, dst):
+                    if os.path.exists(cand):
+                        import shutil
+                        shutil.copy2(cand, dst)
+                        got = True
+                        break
+            if not got and a.from_release:
+                import urllib.request
+                url = 'https://github.com/%s/releases/download/%s/%s' % (
+                    a.from_release.split('@')[0], a.from_release.split('@')[-1], asset)
+                print('下载 %s' % url)
+                try:
+                    urllib.request.urlretrieve(url, dst)
+                    got = True
+                except Exception as e:                              # noqa: BLE001
+                    print('  失败：%s' % e)
+            if not got:
+                got_all = False
+                print('✗ 没拿到 %s（用 --from-dir 指向你的 runs 目录，或 --from-release owner/repo@tag）' % asset)
+                continue
+            h = sha256(dst)
+            if h != want:
+                print('⚠ %s 校验不一致（文件已留在 %s，请核对来源）' % (os.path.basename(dst), dst))
+                got_all = False
+        if got_all:
             ok += 1
+        else:
+            miss += 1
     print('\n完成：%d 个就位，%d 个缺失' % (ok, miss))
     return 0 if miss == 0 else 1
 

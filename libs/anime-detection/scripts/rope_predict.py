@@ -10,8 +10,9 @@
 
 模型（两条路，`--weights` 显式指定时以你指定的为准）：
   * `.pt`  UNetPre（预训练骨干 + 薄解码器）——**当前交付版**
-    `rope_unet_resnet18_full.pt`：resnet18 骨干不冻结，全部 30 张标注训练，需 torch。
-    阈值存在 .pt 里（`--conf` 可覆盖）。实测这是 F1（0.848）与同等召回笔数双料冠军，见 docs/rope_feedback_analysis.md。
+    `rope_unet_resnet18_g14.pt`：resnet18 骨干不冻结 + RGB + ±20° 旋转，**79 张人工标注**训练，
+    留出集 F1 0.9178 / 召回 0.9812（旧 30 图版 0.848 / 0.838）。需 torch。阈值存在 .pt 里（`--conf` 可覆盖）。
+    见 `docs/rope_runs_check_2026-10-13.md` §7 与 `docs/rope_C_result.md` §2c。
   * `.npz` k×k 邻域 HSV 摊平 → 小 MLP（纯 numpy，不需要 torch）——**兜底路径，一直保留可用**。
 默认权重 = 有权重文件且有 torch 就用 .pt，否则自动退回 MLP（`default_weights()`）。
 逐行分块做稠密滑窗，避免 2364×1773 图一次性展开 (H*W*k*k*3) 撑爆内存。
@@ -31,15 +32,29 @@ W_DIR = os.path.join(ROOT, 'data', 'masks', 'rope', 'weights')
 
 
 def default_weights():
-    """默认交付权重：有 torch 且冠军权重在位，就用 UNetPre(resnet18 不冻结)；
-    否则退回不依赖 torch 的 MLP 兜底（保底路径必须一直可用）。"""
-    pt = os.path.join(W_DIR, 'rope_unet_resnet18_full.pt')
-    if os.path.exists(pt):
-        try:
-            import torch  # noqa: F401
-            return pt
-        except Exception:
-            pass
+    """默认交付权重：有 torch 且交付权重在位，就用 UNetPre(resnet18 不冻结)；否则退回不依赖 torch 的 MLP 兜底。
+
+    2026-10-14 换权重：`rope_unet_resnet18_g14.pt`（G14 配置 = resnet18 不冻结 + RGB + ±20° 旋转，
+    **79 张人工标注**训练）取代 `rope_unet_resnet18_full.pt`（30 张，thr 0.92）。同一留出集 s01~s05、
+    同一 `rope_eval.py` 口径：
+
+    | 交付权重 | P | R | F1 | 笔数（误检块+漏检段） |
+    |---|---|---|---|---|
+    | 旧 full（30 图） | 0.899 | 0.838 | 0.848 | 298（182+116） |
+    | 新 g14（79 图） | 0.862 | **0.9812** | **0.9178** | 340（294+46） |
+
+    即**从"漏绳"变成"更敢报"**（漏检段 −60%、误检块 +62%，笔数 +14%）——按本项目"宁可略偏大、
+    不要漏阴影段"的偏好选它。**交付 s0**（预注册的 seed 0，不按留出集挑选）；另外两个 seed：
+    F1 0.9211 / 0.9441，笔数 279 / 281。旧权重仍在盘上，`--weights` 可指回去。
+    """
+    for pt in (os.path.join(W_DIR, 'rope_unet_resnet18_g14.pt'),
+               os.path.join(W_DIR, 'rope_unet_resnet18_full.pt')):
+        if os.path.exists(pt):
+            try:
+                import torch  # noqa: F401
+                return pt
+            except Exception:
+                break
     return os.path.join(W_DIR, 'rope_mlp_k9_4img.npz')
 
 
@@ -61,7 +76,11 @@ def load_unet_weights(path):
     enc = z.get('encoder')
     if enc is None:
         ks = list(sd.keys())
-        if any(k.startswith('enc.body.model.') for k in ks):
+        if any('relative_position_bias_table' in k for k in ks):
+            enc = 'swin_t'                       # Swin：enc.body.<stage>.<blk>.attn.*
+        elif any(k.startswith('enc.body.0.norm1.') for k in ks):
+            enc = 'vit_b_16'                     # ViT：enc.body.<blk>.norm1.*
+        elif any(k.startswith('enc.body.model.') for k in ks):
             enc = 'yolo11n_seg'
         elif any(k.startswith('enc.body.features.') for k in ks):
             enc = 'mobilenet_v3_small'

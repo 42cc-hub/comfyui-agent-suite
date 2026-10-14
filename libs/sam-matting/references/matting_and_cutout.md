@@ -150,3 +150,40 @@ python scripts/contact_sheet.py sheet.png 260x380 *.png      # 批量目视
 1. 图是自己生成的、且提示词写了纯色背景 → `matte_flat_bg.py`，直接用。
 2. 图是别人的/海报 → 先请人涂两层轮廓 → `matte_from_scribbles.py`；需要去道具/特效/补遮挡 → 走百炼，然后 `chroma_key.py`。
 3. 任何"看起来很干净"的结果，都用 `score_matte.py` + `compare_matte.py` 对着 GT 验一遍再下结论。
+
+
+---
+
+## Cutting the background out (matting / alpha)（自入口 SKILL.md 搬入 2026-10-13）
+
+> 来源：`SKILL.md` 的同名章节，2026-10-13 入口瘦身时**整段**搬来，正文未改（只调了标题层级与交叉引用）。
+
+
+Full playbook with measured numbers: **`references/matting_and_cutout.md`**. Pick by input type —
+the difficulty differs by an order of magnitude:
+
+| Input | Route | Measured |
+|---|---|---|
+| Our own render, prompt said `plain white background` | `matte_flat_bg.py "out/**/*.png" --out DIR` | SAM score 0.961 mean over 19 images, 1–3 islands each, no decisions |
+| Someone else's illustration / poster | `matte_from_scribbles.py IMG --fg FG.png --bg BG.png [--subtract mask.npy]` | IoU 0.737 against a hand-cut GT (0.779 when the best SAM proposal is hand-picked via `--pick`) |
+| Flat chroma background | `chroma_key.py IN.png OUT.png` | background-coloured pixels left inside: 0.000% |
+| Need props/effects **removed** or occluded areas **rebuilt** | `bailian_image_edit.py edit IN.png OUT.png "<instruction>"` then `chroma_key.py` | one 21 s call, but it re-renders: two prompt variants agreed at only alpha IoU 0.586 |
+
+Key facts that decide the approach (each cost a failed attempt):
+
+- **SAM, not colour.** `models/sams/sam_vit_b_01ec64.pth` ships with this skill; install with
+  `pip install segment-anything`. GrabCut fails on white hair over a white background, and a
+  lineart-dam flood fails on posters whose background is dark and textured.
+- **The proposal choice matters more than the prompt.** With a box over the whole subject, SAM's
+  highest-scoring mask is often everything in the box. `sam_object_mask.segment` ranks proposals
+  by IoU against the rough foreground / the human's scribble, and `matte_from_scribbles.py` prints
+  every proposal so `--pick` can override.
+- **Do not invent island rules.** On a poster, "keep only the largest island", "islands right of
+  x=500 are flames" and "pale islands are flames" respectively deleted the long hair sweep + lower
+  leg, the red wing ornament, and the entire character. Use the human's scribble per island: it
+  agreed with the hand-cut ground truth on **7/7** islands.
+- **Hosted edit models return no alpha** and re-render rather than segment, so a cutout from them is
+  "draw on chroma → key locally", and the pixels are the model's, not the original's.
+- **Verify, don't trust.** `score_matte.py GT.png mine.npy` (IoU / FP / FN / edge + error clusters)
+  plus `compare_matte.py` (red = missed, blue = added) before claiming a matte is good.
+

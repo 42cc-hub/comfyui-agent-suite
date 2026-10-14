@@ -18,14 +18,17 @@ Some modules are polished, some are still under development. Spelled out, so you
 |---|---|---|
 | **Detection (M2a person/hand/foot/head, M2b four face classes)** | ✅ **Relatively reliable** | Validated with per-source-image splits and multiple seeds; head boxes are especially accurate (the mask's "head" is their **inscribed ellipse**) |
 | Local quality classification (M3) | ⚠️ Usable, few samples | Only coarse calls like "broken structure / blurry / missing part" are reliable; defective samples are the bottleneck |
-| **Skeleton (M1 keypoints)** | ❌ **Unreliable, WIP** | Never got a dedicated effort: joints drift, fine points (nose/mouth) land in the wrong place, and person↔skeleton pairing fails under strong overlap. **Don't derive masks from M1 keypoints** — use detection boxes |
-| **Rope** | ❌ **Unreliable, WIP** | Obvious misses in low-contrast and dark scenes; the positive-pixel ratio is so low that the training signal gets diluted. Per-round conclusions live in `docs/` |
+| **Skeleton (M1 keypoints)** | ✅ **Usable** (since 2026-10-14) | Replaced with a ViTPose **fine-tuned on human annotations**: on a fixed 15-image report set (279–297 joints) coverage **88%**, median **23.1 px**, p90 **97.8** — vs YOLO-pose 89% / 70.5 / 335.0 and dwpose 52% / 26.2 / 224.0. Paired cluster bootstrap against dwpose: median −2.0 px ("no difference"), **mean −31.8 px, significant**; face points went from "two eyes only" to all five (nose 14.1 / eyes 11–13 / ears 20–23 px). **Limits remain**: face points drift on back/side views, knees/ankles are extrapolated off-canvas when the box only covers the upper body, and hand/foot detail is not in this layer. Details and reproduction commands: `libs/anime-detection/docs/pose_m1_status.md` |
+| **Rope** | ⚠️ **Usable** (still misses low-contrast/dark) | Delivered weight switched to the G14 config trained on 79 human-labeled images: hold-out F1 **0.9277±0.0117**, recall **0.976** (the old 30-image weight: 0.848 / 0.838). **How to read it**: what you buy is a working-point shift — missed segments −60%, false blocks +62%, strokes ±14% ("no difference" vs the old config) — chosen for "rather slightly too much than a missed shadow segment" |
 | Human-in-the-loop canvas / gate / matting / control maps | ✅ Usable | See each `libs/*/README.md` |
 
 **What's next** (contributions welcome):
-1. **Skeleton dataset**: M1 needs a batch of **human-corrected** skeleton annotations before it can be fixed — the most worthwhile data to invest in right now;
+1. **Hard-joint label consistency**: the median error is already inside the noise of a human re-labeling the same
+   image (old vs new ground truth: 16 px median), so the next lever is a shared convention for the joints that keep
+   drifting (nose / eyes / ears), not more data;
 2. Rope: a harder eval set (the hold-out set is only 5 images — too small to see a 1–2 point improvement) plus sampling / positive-weight changes;
-3. Keep deriving **head/hand/foot repaint masks** from detection boxes (no keypoints needed).
+3. Keep deriving **head/hand/foot repaint masks** from detection boxes (M1 points are usable now, but parts COCO-17
+   has no keypoint for — e.g. the mouth — still have to be derived from the face box).
 
 ## Components and dependencies
 
@@ -63,18 +66,20 @@ pip install -r libs/anime-detection/requirements.txt
 
 ## Model weights (Release download)
 
-The repo **ships no weights**. 11 self-trained models, 70.3 MB in total (person/hand/foot/head detection, four
-face classes, local quality classification, COCO17 skeleton). Provenance, config, metrics and sha256 all live in
-`weights/manifest.json`:
+The repo **ships no weights**. 13 self-trained models, 460 MB in total (person/hand/foot/head detection, four
+face classes, local quality classification, COCO17 skeleton, a **fine-tuned ViTPose skeleton** and the
+**rope mask** model). Provenance, config, metrics and sha256 all live in `weights/manifest.json`:
 
 ```bash
 python skill/scripts/fetch_weights.py --list                    # see the manifest and sizes first
-python skill/scripts/fetch_weights.py --from-release 42cc-hub/comfyui-agent-suite@weights-v1
+python skill/scripts/fetch_weights.py --from-release 42cc-hub/comfyui-agent-suite@weights-v2
 python skill/scripts/fetch_weights.py --from-dir D:/my_runs     # if you trained your own: find best.pt by weight name
 ```
 
-They land in `libs/anime-detection/runs/<name>/weights/best.pt` (the default lookup path for the suite's scripts)
-and every file is checked against its sha256: **a mismatch is reported loudly, never silently used**; if something
+They land in `libs/anime-detection/runs/<name>/weights/best.pt` (the default lookup path for the suite's scripts);
+**directory-shaped weights** (the fine-tuned ViTPose is a whole HF directory) land in the `dest` recorded in the
+manifest (`libs/anime-detection/models/…`), and pointing `--from-dir` at the suite root is enough.
+Every file is checked against its sha256: **a mismatch is reported loudly, never silently used**; if something
 can't be fetched, the script prints the manifest and exits instead of failing quietly.
 
 ## First run: the install-succeeded probe

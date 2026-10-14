@@ -554,3 +554,173 @@ python sample_prompts.py        # -> analysis/sample_prompts.txt（52 条最远�
 - `wf/*.json` 字段：`image, src, size, positive, negative, checkpoint, loras, sampler, prompt_graph`。
 - `negative` 的原样文本也在 `prompt_graph` 里，可回溯。
 - corpus 快照：544 条（536 条正向、528 条负面），采集于 2026-09-28/29。
+
+
+---
+
+## Writing the prompt — structure, negation, costume swaps（自入口 SKILL.md 搬入 2026-10-13）
+
+> 来源：`SKILL.md` 的同名章节，2026-10-13 入口瘦身时**整段**搬来，正文未改（只调了标题层级与交叉引用）。
+
+
+Rules distilled from the local `comfyui_PromptManage` plugin
+(`custom_nodes\comfyui_PromptManage`: `README.md` §LLM 提示词生成规则,
+`web/llm-templates.json`, `prompt_example/LLM_analyze_prompt.md`), Anima-specific
+adjustments, hard-won A/B measurements, **and a 536-prompt corpus harvested from
+`<你的图片目录>` (2026-09-28/29)**.
+
+**写提示词时先开速查表:`references/prompt_cheatsheet.md`** —— 可抄的正向前缀（IL/Anima）、
+四套负面模板、8 条骨架模板（单人/双人 `{}` 块/容器内/悬吊/Anima）、词表（绳索按部位、
+口球、腿几何、状态、镜头）、if→then 规则表、参数表。**展开的规则与证据**
+（每条数字的来源、A/B 实测）：`references/prompt_writing.md`。语料统计复现：
+`experiments/prompt_organize/analyze_corpus.py` + `analyze_extra.py`
+。
+
+**硬性要求：一级用空行（`\n\n`）分区块，二级用单换行（`\n`）分要素。** JSON 里写 `\n\n` 就是
+ComfyUI 界面里的空行。理由：提示词是给人**手动改**的，人的注意力有限——2026-09-21 交付过一版把
+六组压成一行的提示词，用户当场要求返工（"人的注意力是有限的，处理不了那么多黏着的滔滔不绝的
+文本"）。语料实测：**85% 的提示词在区块内部用单换行，中位 9 行 / 4 个空行区块**，所以正确粒度是
+**行**——姿势一行、缚法一行、表情一行、服装一行；只有 4% 是一条到底。
+
+**分组顺序（经验值，来自 536 条实际提示词的平均位置）：**
+
+```
+风格/质量块  →  场景/镜头  →  主体+姿势+缚法+表情  →  角色身份+外观+服装  →（可选）风格块
+0.06–0.17      0.35–0.45      0.49–0.61               0.71–0.75
+```
+
+**角色身份块放最后三分之一**（284 条带 `名字 \(系列\)` 的提示词里平均位置 0.71，69% 落在后 1/3）。
+好处是**换角色只改一块**，不动场景和缚法。位置本身不敏感，但**同一系列内保持一致**。
+`[plugin]` 规则 4 的"质量 → 主体 → 服装 → …"是另一种排布，同样可用。
+
+**风格块是固定的、可整段复制的**：语料里 **57% 的提示词开头 18 个 tag 逐字相同**，
+即 `masterpiece, best quality, absurdres, ultra detailed, high resolution, newest, highly
+aesthetic, intricate details, professional artwork, trending on ArtStation, digital illustration,
+painterly style, soft gradient shading, professional digital painting, extreme details`
+（Anima 系换成风格 LoRA 的**触发整句** + `score_9/8/7` + `year 2025`）。
+`masterpiece, best quality, absurdres` 本身不是风格——风格在那串尾巴上。
+**风格块只写一次**；重要特征给 2–4 个同义强化词。
+
+**IL vs Anima — the one real difference:**
+
+| content | Illustrious (SDXL) | Anima (qwen-image) |
+|---|---|---|
+| scene / mood / lighting / event | tag phrases | **a sentence** (clauses, semicolons OK) |
+| constituent elements (clothing, body, props, style) | tag phrases | **comma phrases** |
+
+Mnemonic: **"what happens" in sentences, "what is there" in phrases.**
+
+**Never put negation in the positive prompt.** The text encoder does not bind `no`,
+`without`, `nothing`, `except` to the noun that follows — `no apron` reads as *apron*.
+Write the affirmative (`plain white summer dress`), and move the unwanted thing
+(`apron, navy blue maid dress, black skirt`) into the **negative** prompt. Same for
+quantitative constraints: `only the very edges, nothing in the middle` is read as
+*edges* + *middle*, so the middle gets drawn anyway. (Corpus check: only 2% of tag-style
+prompts contain `no <noun>`, so the convention agrees.)
+
+**负向是"第二块画布"，不是只放缺陷。** 语料里负向的用途分布：材质/风格纠正 55%
+（`brush, comic` 压水彩 LoRA；`flat colors, cel shaded, flat shading, hard edges, low contrast`
+锁厚涂风）、角色服装残留清除 14%、裸露压制 11%、**多人压制 10%**（单人图加 `people, person, girl`）、
+**姿势/器具压制 6%**（`hanging rope, suspension, ribbon, satin ribbon` —— `red rope` 的默认读法
+之一就是悬吊和缎带）。原则：**"这个词会带来的不想要的读法"进负向**。
+固定缺陷块也在 `references/prompt_writing.md` §2（三条可直接抄的模板）。负面同样要瘦身。
+
+**Costume / character swaps need an explicit replacement clause.** A LoRA carries its
+own outfit, and merely naming a new garment loses to it. Write
+`plain white summer dress instead of a maid outfit`, **and** put
+`navy blue maid dress, maid outfit, apron` in the negative — that combination took the
+white dress from 0/4 to 4/4. Target garment alone in the positive: swap fails.
+
+**短动作短语胜过几何描述 —— 但"拓扑"可以用句子。** `pull down the dress on crotch
+with both hand` 一次就中；一段描述"中间那块压平、外侧两角高于胯线、大腿外侧露出一条窄边"
+的段落被 8 张图全部无视。语料的修正：**绳路这种"什么连着哪里"的拓扑，句子反而更清楚**
+（14% 的语料用整句：`Her upper body is tied in shibari style by large amounts of red ropes,
+and her arms are tied behind her back.` ×7）。判据：**句子里出现相对量/像素量就停手，
+去 `references/blender_control_pipeline.md` 或遮罩。**
+
+**绳索要写部位。** 不要只写"绑住腿"：语料用 `bound ankles / bound knees / bound thighs /
+bound legs / bound arms / bound wrists / bound feet` 逐个部位写，配 `shibari, red rope,
+crotch rope, breast rope, skindentation`（绳勒进皮肤）、`shibari over clothes`（隔衣缚，
+防自动脱衣）。完整词表 + 规范/非规范写法之辨：`references/prompt_writing.md` §3。
+
+**整体缚法挑"有公认英文名的那个"** —— 14 种姿势实测（Anima，绿✅9 / 半⚠️5 / 认不出 0）：
+最好使的是 `box tie / hogtie / gyaku ebi / frogtie / strappado / crotch rope / ippon tsuri /
+human dog`，日文名单独写没有控制力。**绳的艺术编花（菱形 karada、龟甲 kikkou）出不来** ⇒ 要控制图或局部重绘；
+`suspension` 默认读作**倒吊**，要立吊写 `single rope, bound wrists above head`；`spread eagle` 只是**摆开**、没绑四角；
+双人并绑用 `bound together, back to back, ropes joined, 2girls` 一次就成。
+逐姿势 tag 表与证据：`references/prompt_cheatsheet.md` §4「整体缚法姿势」。
+
+**权重幅度跟底模走，且本管线未做 A/B。** 语料：IL 用权重时中位 **1.20**、只有 5% 到 1.5 以上；
+Anima 中位 **1.50**、**51%** 在 1.5 以上（出现 `(shibari:4.0)`）。IL 上写 `:4.0` 没有依据，
+会海报化。**先减词，再调权重。**
+
+**Check the tag's real meaning before writing it** (esp. Japanese net/fashion terms —
+在线百科 / 萌娘百科). One theme word was drawn literally as a prop for 12 images
+before the definition was checked; the correct reading was a garment silhouette. A
+wrong reading costs a whole batch.
+
+**提示词不是"越多越好"，正负都要适度 —— 写"承重的那几个"，不是写"齐全"。**（2026-09-21，用户纠正）
+
+- **机制**：词表越长，每个词的相对权重越低（词表长度本身就是稀释）。堆到几十个词之后，
+  新增的词不再增加控制力，只是把已有的词摊薄。
+- **实测（负向）**：一版把 60+ 个缺陷词塞进负向、还给鞋类词加了 `(shoes:1.45)` → 鞋子纹丝不动，
+  反而因负向过载把整张图渲染成绿/红海报化；另一版只用 20 个词、鞋类只留 `shoes, high heel`，
+  配合 `cfg 8 / 20 步` → 鞋直接消失。
+- **实测（正向）**：同一时期把角色 + 服装 + 姿势 + 表情 + 质量词全堆成一行长句的版本，
+  反而不如用户自己写的"短句 + 分组空行"版本听话（那次短版直接把鞋去掉了）。
+- **做法**：每个内容组只留**承重的那几个词**；分组空行（见本文件 §Writing the prompt 的硬性要求）
+  让你能**整组删掉而不伤别的组**。
+- **判据**：**加一个词如果没让画面可辨地改变，它就是噪声，删掉。** 先减词，再调权重 ——
+  加权是最后手段，不是第一手段。
+
+
+
+---
+
+## 两个"模型不认识的新角色"同框、且不许反左右（2026-10-13 第 3 份报告的标准解）（自入口 SKILL.md 搬入 2026-10-13）
+
+> 来源：`SKILL.md` 的同名章节，2026-10-13 入口瘦身时**整段**搬来，正文未改（只调了标题层级与交叉引用）。
+
+1. **先出一张不挂任何角色 LoRA 的"版式底图"**，把布局与关系做对；方向一律写**画面坐标系**
+   （`the girl on the left side of the image`、`leans sideways to her left`），负面点名
+   `mirrored composition / swapped positions`；
+2. `check_parts.py --person-masks` 拿**每人一块、互不重叠**的掩版（见 `references/local_repaint_bigcanvas.md` 的「逐人掩版」节）；
+3. **每次只挂一个人的 LoRA**（1.0/1.0 + sidecar 的完整触发词表），`denoise 0.65~0.75`，串行两次；
+4. **每人的重绘提示词里都写一遍接触关系**（"the other girl leans her head on her shoulder"），否则边界处的姿态会被改坏。
+> 中文角色名在 LoRA 文件名里常搜不到，但写在 sidecar 的 `model_name` 里（遍历匹配）；最全的触发词在
+> sidecar 的 `civitai.images[].meta.prompt`。
+
+**模型与代码位置（只给路径，不复制）**
+
+| 东西 | 路径 |
+|---|---|
+| 套件根 | `<ANIME_DET_SUITE>`（`--suite` 或环境变量 `ANIME_DET_SUITE` 可覆盖） |
+| 产线入口 | `<套件>\scripts\locate.py` |
+| 推理环境 | `python`（ComfyUI 自己的 env，有 torch+ultralytics；`--python` 可换） |
+| 权重 | `<套件>\runs\<name>\weights\best.pt`；每层的默认权重写在 `locate.py` 顶部的 `DEF_*` |
+| M1 骨架 | **首选** `models/vitpose_ft_v6_labelbox_honly`（微调 ViTPose，HF 目录，top-down 吃 M2a 的 person 框）；缺目录或 `--no-vitpose` 时回落 `runs/m1_pose_coco17` + `runs/m1_pose17_1129`（取检出人多的）→ dwpose |
+| M1 实测 | 固定 15 张报告集（279 关节）：ViTPose-ft 覆盖 88% / median 23.1px / p90 97.8；回落那套 71% / 66.0 / 341.6。配对聚类 bootstrap：与 dwpose 比 median「无差别」(−2.0px)、**mean 显著** −31.8px [−53.3,−11.0] |
+| M2a 框 | `runs/m2a_det_996img_960`（person/hand/foot/head）+ `runs/m2a_foot_v1`（单类脚，取并集）；可选 `runs/m2a_hand_v2`（单类手） |
+| M2b 面部 | `runs/m2b_face_v3_3983`（输入是 head 裁剪的 256×256） |
+| M2b-gag | `runs/m2b_gag_v2` + `runs/m2b_gag_v4`（并集；口塞/眼罩） |
+| M3 指趾判定 | 现役 `runs/m3_cls_aug_v1` + `runs/m3_review_v1`（**val 有训练集泄漏**，见套件 R43）；推荐 `runs/m3_clean_v1_s2026{1,2,3}010` |
+| M4 绳子 | **不在本入口**：由 rope 模块产出 `data\masks\rope\<name>_{mask,conf}.png`，`locate.py` 只按约定路径引用 |
+
+**已知限制（别把"没报错"当成"一定没问题"）**
+1. M3 的诚实指标（按源图 5 折折外）：召回 **0.74（单模型）/ 0.79（双权重并集）**，ok 误报 14%~19%；**手（0.61）明显差于脚（0.85）**。
+2. 脚召回靠三级兜底（4 类 ∪ 专用脚 ∪ 踝点外推）；契约 JSON 的 `boxes` **不含**兜底补的部位（见 `boxes_all`）。
+3. 分辨率：`--imgsz 1600` 明显好于 1280（手覆盖 4/8→5/8，08 那种"趾多"从只被收紧旗标报出变成进主判定），代价约 1.5~2× 时间；本机 1536×1024 的图在 1280 下约 17 s/张、加 `--person-masks` 再 +10 s。
+4. 上面的验收数字都来自**同一批 8 张图**，小样本；换风格/题材请自己再复核几张。
+5. `rope` 只表示"**rope 模块有没有留下掩版文件**"（`present|missing`），**不代表图里没有绳** —— 本入口不做绳子检测。
+6. 更细的接口与实验记录在 `<套件>\docs\`：`integration.md`（接口与降级）、`runs.md`（R1~R49 实验）、`handover_20261012.md`（现状与待定项）。
+
+**契约 JSON 里给下游用的字段（2026-10-13 新增，都是加法式的）**
+- `points[].person_id` / `boxes[].person_id`：把点/框挂到具体某个角色上（多角色图做逐人处理时必需）。
+- `n_persons`（M2a 的 person 框数）与 `n_skeletons`（M1 链数）分开报；旧的 `n_people` 仍是骨架数（兼容）。
+- `boxes_all`：`boxes` **加上**兜底补的部位（专用脚 / 踝点外推 / 专用手），每个框带
+  `origin: det | fallback`。做掩版请用 `boxes_all`，否则会漏掉兜底找回来的脚。
+- `persons_masks` / `person_boxes_dropped` / `person_instances_merged`：见 `references/local_repaint_bigcanvas.md` 的「逐人掩版」节。
+
+**想更新模型**：把新权重放到 `<套件>\runs\<name>\weights\best.pt`，然后改 `locate.py` 的 `DEF_*`，
+或调用时用 `--m3-weights/--hand-weights` 指定；`--recipe rec` 就是"实测更好但还没转正"的那一套。
+
