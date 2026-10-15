@@ -21,7 +21,7 @@ human_canvas action=status task=<token>     # when the human replies
   → annotation.raster.layers[].file  = one PNG per layer (alpha = what was painted)
 ```
 
-Learnings that make this cheap (2026-09-26):
+Learnings that make this cheap:
 
 - **Ask for two layers, not one:** L1 「repaint」 and L2 「keep」. `keep` is the human's
   *protection switch* — fingers, a hair ornament, a region that is already good. Mask =
@@ -46,7 +46,7 @@ Learnings that make this cheap (2026-09-26):
 Deriving the mask from a canvas layer:
 
 ```bash
-python tools/canvas_mask.py（薄封装，自带） --rope L1.png --keep L2.png \
+python tools/canvas_mask.py --rope L1.png --keep L2.png \
        --src BASE.png --out mask.png --overlay overlay.png --dilate 4 --feather 3
 ```
 
@@ -57,7 +57,7 @@ crop, halve them for the original.
 
 > ### ⛔ 硬规则：**一次只能开一个文件**
 > **绝对不要连着调两次 `ps_edit action=open`**（也不要在 PS 里已经开着文件时再 open 另一个）。
-> 本机实测（2026-10-06）：同时打开两个文件会让 **Photoshop 直接卡死**，人只能强杀进程，
+> 本机实测：同时打开两个文件会让 **Photoshop 直接卡死**，人只能强杀进程，
 > 未保存的手改全丢。要给人看/改第二张时，**先让人存了并关掉当前这张**，再 open 下一个。
 > 一次交接 = 一个文件 = 一轮对话。
 

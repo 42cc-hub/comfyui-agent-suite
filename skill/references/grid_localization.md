@@ -10,7 +10,7 @@ Crop the region of interest, scale it 1–2.5×, and draw a labelled grid **in o
 coordinates**:
 
 ```bash
-python tools/crop_view.py（薄封装，自带） IMG.png out/grid.png 700,600,1250,1080 --scale 1.5 --grid 100
+python tools/crop_view.py IMG.png out/grid.png 700,600,1250,1080 --scale 1.5 --grid 100
 ```
 
 Rules that make it useful:
@@ -29,7 +29,7 @@ region as a classified character map (R = target colour, S = skin, `.` = backgro
 night, `?` = other):
 
 ```bash
-python tools/ascii_map.py（薄封装，自带） IMG.png 740,380,1000,560 --step 4
+python tools/ascii_map.py IMG.png 740,380,1000,560 --step 4
 ```
 
 This is how you discover, without opening an image viewer: that a "rope region" actually runs
@@ -41,7 +41,7 @@ between resolution and readable width.
 
 ```bash
 # same region, N images stacked, each labelled (中文 labels OK)
-python tools/sheet3.py（薄封装，自带） out/arm_3way.png 690,440,910,620 \
+python tools/sheet3.py out/arm_3way.png 690,440,910,620 \
        --labels '原图,0.3,0.5' --scale 3.2 a.png b.png c.png
 ```
 
@@ -57,7 +57,7 @@ python tools/sheet3.py（薄封装，自带） out/arm_3way.png 690,440,910,620 
 For "the red rope", "the gold trim", "the blue cloth" there is no need to ask a human:
 
 ```bash
-python tools/red_mask.py（薄封装，自带） IMG.png mask.png \
+python tools/red_mask.py IMG.png mask.png \
        --hue-max 16 --sat-min 0.60 --val-min 0.35 --min-area 400 \
        --drop 1200,1150,1920,1700 --overlay overlay.png
 ```

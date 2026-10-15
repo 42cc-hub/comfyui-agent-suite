@@ -21,7 +21,7 @@ an AI classroom render, 832×1216):
 
 ⇒ **tone match alone cut the seam step by ~57 % and brought the patch's sharpness/noise profile onto the base's.**
 
-### Second case — a **bright** object (calligraphy sheet) hung on a warm wall (2026-09-27)
+### Second case — a **bright** object (calligraphy sheet) hung on a warm wall
 
 Generated an IL interior (Chinese study, warm lantern light) and pasted a photo-derived white calligraphy
 sheet onto the wall, three ways. **The lesson is that `--match lab` is wrong for a bright object, and that the
@@ -37,15 +37,13 @@ Visual verdict: naive = a sticker; `lab` = the white paper turns into an old amb
 lost); **chroma + cast = reads as a sheet hanging in that warm room** (bright ivory paper, warm cast, subtle
 shadow under the right/bottom edge). What is still **not** natural in all three: the sheet's **plane** does not
 match the wall's perspective and it has no frame/thickness — i.e. the residual failure is **geometry**, exactly
-the category the external review put above tone.
+the category §6 ranks above tone.
 
-### Third case — hang it properly: a **wall** + a **program-drawn frame** (2026-09-27)
+### Third case — hang it properly: a **wall** + a **program-drawn frame**
 
-Pasting a bare sheet onto a room's back wall proved a poor test (the user's point: a bare sheet on a wall is not
-something you can judge). Redone: generate **a wall** (IL, frontal plaster wall, warm lamp lower-left, wainscot),
-give the calligraphy a **program-drawn frame** (mat + dark-wood frame + inner gold line + bevel highlight), hang it,
-then composite. Seam measured on the **top and left** edges (the cast shadow falls lower-right, so those two edges
-are the fair ones):
+Generate **a wall** (IL, frontal plaster wall, warm lamp lower-left, wainscot), give the calligraphy a
+**program-drawn frame** (mat + dark-wood frame + inner gold line + bevel highlight), hang it, then composite.
+Seam measured on the **top and left** edges (the cast shadow falls lower-right, so those two edges are the fair ones):
 
 | variant | seam top | seam left |
 |---|---|---|
@@ -61,7 +59,7 @@ are the fair ones):
 **Lesson: put the object where the scene's structure is (a wall, a floor, a desk), otherwise the composite cannot
 be judged at all.**
 
-### Fourth case — **replacing a rope's texture** with our procedural rope (2026-09-27)
+### Fourth case — **replacing a rope's texture** with our procedural rope
 
 Chain: IL renders a bound figure → `rope_texture.py path/render` extracts the rope's centreline and redraws it with
 our own strand texture → `harmonize.py` adjusts the replaced region. Measured:
@@ -80,7 +78,7 @@ colour test is unreliable in a warm scene — or supply the mask yourself (`--so
 needs small kernels** (3/9 px), otherwise the band is empty and reports 0. **(4) Do not luminance-match a rope**
 (it has its own material) — `--match chroma` (+AO) is the right mode.
 
-### Fifth case — a **chain** along a hand-painted path (`chain_texture.py`, 2026-09-27)
+### Fifth case — a **chain** along a hand-painted path (`chain_texture.py`)
 
 The human paints where the chain should go in `human_canvas` (one raster layer), then:
 `rope_texture.py path <layer.png> --source alpha` → centreline → `chain_texture.py render <base.png> --path …` →
@@ -96,8 +94,7 @@ The human paints where the chain should go in `human_canvas` (one raster layer),
 | `harmonize --match luma --ao .35 --cast .30` | border metric 61.5 → **41.4**; better than `--match chroma`, which drains the metal's own colour |
 | renderer's own `--shadow` **and** harmonize `--cast` | ❌ double shadow — leave the drop shadow to `harmonize` |
 
-Lessons (this entry went through three revisions; the first two were geometrically wrong and the user caught
-both by writing out a cross-section):
+Lessons:
 
 **(1) A chain's links are not rotated in the image plane; each link rotates about the CHAIN TANGENT.** Every
 link's long axis stays along the chain. One lies in the image plane (a full oval ring with a hole); the next is
@@ -105,8 +102,7 @@ seen nearly edge-on, i.e. **compressed along its short axis** — its two wires 
 reads as a narrow bar (a sliver of hole only if the projected offset exceeds the wire diameter, which needs a big
 viewing tilt). Model this with a single `--tilt` (≈12°) applied to *all* links, not with a manual squash.
 
-**(2) "Hooked through each other" is a topological fact — a 2-D painter's algorithm cannot express it.** The user's
-test: cut a profile through a single ring ⇒ `ABCDCBA` (A outer edge, B wire, C inner edge, D hole); two rings that
+**(2) "Hooked through each other" is a topological fact — a 2-D painter's algorithm cannot express it.** Test: cut a profile through a single ring ⇒ `ABCDCBA` (A outer edge, B wire, C inner edge, D hole); two rings that
 are *hooked* ⇒ the wires of the two rings alternate (`…1…2…1…2…`); the painter's version produced
 `A1B1C1D1C1B1A1` then `A2B2C2D2C2B2A2` — each ring painted as one complete closed shape, just stacked in depth.
 The fix is not a better z-order rule but a **real z-buffer**: build each link as a 3-D tube (a planar stadium
@@ -142,9 +138,9 @@ Implementation: `pipeline/chain_texture.py` (`render` subcommand; `--tilt`, `--w
 `--pitch-ratio`, `--smooth`, `--report`), blank-canvas + topology harness in `experiments/chain_probe/blank.py`
 (`main`, `main3d`, `profile_check`).
 
-### Sixth case — the **fast path** and where the time actually goes (2026-09-27, at the user's request)
+### Sixth case — the **fast path** and where the time actually goes
 
-The user's point: a chain joint only ever has two structures, so a **precomputed joint** should beat a 3-D render.
+A chain joint only ever has two structures, so a **precomputed joint** should beat a 3-D render.
 Built as `--fast`: rasterise one link in each of its two poses **once** (the sprite = coverage + normal field +
 near/far split by the sign of the hit depth), then rotate/translate it per link with `cv2.warpAffine`, composing in
 three passes (all far wires → all oval rings → all near wires). Same placement math as the 3-D path, so the two can
@@ -156,12 +152,12 @@ be compared pixel by pixel.
 | `--fast` (2 sprites + ~30 warps) | **64 ms (2.5×)**; on big links (Wo 90) up to **3.3×** |
 | agreement vs the 3-D reference | differences sit in a 1 px band along every edge/outline (AA-level); the linking number per pair is identical (0.99) |
 
-**The lesson is where the time was NOT.** The first `--fast` version came out only 1.2× faster, and profiling showed
-the cost was **not** the geometry: it was the *post-pass* — four Gaussian blurs, a normal normalisation, a
-`digitize` + palette gather, AO and outline ops — all running over the full 832×1216 canvas for a chain that covers
-**0.5 %** of it. Cropping every post-pass to the chain's bounding box (see `_finish()`), shared by both renderers,
-took the 3-D path from 420 ms to 160 ms by itself. So: **before optimising the algorithm, check that the work is
-proportional to the object, not to the canvas.**
+**The lesson is where the time was NOT.** A first `--fast` version came out only 1.2× faster; the cost was **not**
+the geometry but the *post-pass* — four Gaussian blurs, a normal normalisation, a `digitize` + palette gather, AO
+and outline ops — all running over the full 832×1216 canvas for a chain that covers **0.5 %** of it. Cropping every
+post-pass to the chain's bounding box (`_finish()`, shared by both renderers) took the 3-D path from 420 ms to
+160 ms by itself. So: **before optimising the algorithm, check that the work is proportional to the object, not to
+the canvas.**
 
 ---
 
@@ -241,16 +237,16 @@ dragging its luminance to the wall turns white paper into an old scroll and make
   feather the outer frame edge** — UI is meant to sit on top crisply; only the *illustration-facing* inner edges
   (e.g. a translucent panel) need softening.
 
-## 6. External review — what a larger model said to change (ChatGPT, 2026-09-27)
+## 6. External review — proposed upgrades
 
-Put to it: this pipeline, the measured numbers (seam 60.2 → 25.4, histogram worse at 54.2), and four questions.
-Its verdict in one line: **the remaining "pasted" feeling is not a colour problem any more — it is
+Input: this pipeline, the measured numbers (seam 60.2 → 25.4, histogram worse at 54.2), and four questions.
+Verdict in one line: **the remaining "pasted" feeling is not a colour problem any more — it is
 *painting language*, *lighting*, *edge style* and *layer topology*; keep tuning LAB/σ/Laplacian and returns fall off.**
 
-**Priority order it proposes** (higher first): reconstruction of the **painting language** → **local lighting** →
+**Priority order** (higher first): reconstruction of the **painting language** → **local lighting** →
 **edges/contours** → **layer relations** → statistical harmonization → global noise/sharpness.
 
-### The upgrades, with the parameters it gave
+### The upgrades, with parameters
 
 | # | Upgrade | How | Numbers |
 |---|---|---|---|
@@ -264,13 +260,13 @@ Its verdict in one line: **the remaining "pasted" feeling is not a colour proble
 | 8 | **Light-direction map / master lighting profile** | one 2D `L(x,y)` (or a YAML profile: azimuth, elevation, temperature, intensity, shadow_strength, shadow_softness) that **every** program element (rope, robot, UI, repairs) consumes | light ×1.08 +hue 5°, shadow ×0.72 −hue 8° |
 | 9 | **Estimate the key light from the character** | mark 2–5 highlight/shadow points on the figure, fit a 2D lighting field, make all inserted elements follow it | — |
 
-### Corrections on the learned-harmonizer question
+### Learned harmonizers — what to use
 
-- **The paper I was thinking of is the wrong one**: *Harmonizing Attention* (WACV 2025) is **texture-aware
-  geometry transfer**, not foreground/background image harmonization.
+- *Harmonizing Attention* (WACV 2025) is **texture-aware geometry transfer**, not foreground/background image
+  harmonization.
 - The right family: **FreePIH** (ACM MM 2024, *training-free painterly image harmonization*) and **TF-GPH**
   (AAAI 2025, *training-and-prompt-free general painterly harmonization*, official repo, **SD2.x, ~20–23 GB VRAM**
-  ⇒ not runnable on this 6 GB laptop). It also warns that their benchmarks are "painting + photographic object",
+  ⇒ not runnable on this 6 GB laptop). Their benchmarks are "painting + photographic object",
   which is **not** our target ("looks like *this* anime illustration"), so they may not beat the deterministic route.
 - **Cheapest thing to actually try: PIH** (Adobe, CVPR 2023, semi-supervised parametric harmonization) —
   there is a **ComfyUI-PIH** custom node: `Background + Foreground + Mask → harmonize`, strength adjustable.
@@ -278,7 +274,7 @@ Its verdict in one line: **the remaining "pasted" feeling is not a colour proble
   `E` classical+FreePIH / `F` classical+TF-GPH, judged by **edge seam, low-frequency colour error, edge energy,
   human preference and identity preservation** — and with the hard constraint that **a harmonizer must not alter
   the structure inside the mask** (screws/gears/connections must survive).
-- Its conclusion: prefer **deterministic harmonization + optional learned harmonization** over "a learned
+- Conclusion: prefer **deterministic harmonization + optional learned harmonization** over "a learned
   harmonizer does everything".
 
 ### Recommended pipeline order (harmonizer last, not central)
@@ -298,7 +294,7 @@ master lighting profile
   → human check
 ```
 
-### Benefit / cost ranking it gave
+### Benefit / cost ranking
 
 | tier | change | benefit | cost |
 |---|---|---|---|
@@ -313,7 +309,7 @@ master lighting profile
 | C | Diff-Harmonization | ★★☆☆☆ | high |
 | C | histogram matching | ★☆☆☆☆ | already measured as worse |
 
-**Closing point worth keeping**: "pasted" decomposes into four independent problems — **geometry** not of this
+**Closing point**: "pasted" decomposes into four independent problems — **geometry** not of this
 world (topology/perspective/contact), **light** not of this world (master lighting/relighting/shadows),
 **painting language** not of this world (edge/value bands/palette/frequency), **material** not of this world
 (texture/highlight/micro-detail). The classical pipeline above only touches the last third; the next real
@@ -322,6 +318,6 @@ taking FG + BG + mask + lighting profile).
 
 ## 7. Open items
 
-- ~~Consult a larger model~~ **done 2026-09-27** (section 6). Next: implement the S-tier items (value bands,
-  edge language, unified lighting profile) in `scripts/harmonize.py`, then A/B on the same classroom+chain case
-  and re-check the seam metric; only then evaluate PIH as an optional last stage.
+- Implement the S-tier items (value bands, edge language, unified lighting profile) in `scripts/harmonize.py`,
+  then A/B on the same classroom+chain case and re-check the seam metric; only then evaluate PIH as an optional
+  last stage.

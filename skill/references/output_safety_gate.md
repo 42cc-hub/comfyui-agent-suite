@@ -1,7 +1,7 @@
 # 出图安全闸门：读图前自检 + 人工审核通道
 
 **风险模型**：agent 用视觉工具看图 = **把这张图上传到模型服务商**。画面一旦命中敏感元素，
-账号有被封的风险（用户 2026-09-24 明确要求）。所以"看不看"必须是一个**受控动作**，不是顺手动作。
+账号有被封的风险。所以"看不看"必须是一个**受控动作**，不是顺手动作。
 
 ## 规则一：先过本地闸门，再决定看不看
 
@@ -20,35 +20,24 @@ python libs/wd14-gate/scripts/nsfw_gate.py out/*.png            # 像素统计�
 | `REVIEW` (sensitive / **questionable 但无关键点** / **explicit 但无关键点（escalated）** / **仅命中姿势表（pose-level）** / 命中关注标签) | 可能擦边 | 标签温和（`bare legs`、`bare shoulders`、`cleavage`、`navel` 这类）时可看 ✓ |
 | `BLOCK` (**命中关键点**；explicit **且**命中关键点或姿势表) | 不可看 | **绝对不看**，走规则二 |
 
-> **2026-09-24 更新（用户同意）**：硬边界是**关键点**，不是 WD14 的整体 rating。
-> 实测一圈"绳缚＋强迫＋居家薄衣"的图全被判 `questionable`，但**关键点标签一个都没有**、
-> 人眼看也正常 ⇒ 分类器对 BDSM 语境偏保守是已知特性 ✗。
-> 故 `questionable` 不再一刀切 BLOCK；无关键点的 `questionable` 归 REVIEW（可看，仍留痕）。
+> **硬边界是关键点，不是 WD14 的整体 rating。** 实测：绳缚＋强迫＋居家薄衣一圈全判 `questionable`，
+> 关键点标签为 0、人眼正常 ⇒ 分类器对 BDSM 语境偏保守。故 `questionable` 不再一刀切 BLOCK；
+> 无关键点的 `questionable` 归 REVIEW（可看，仍留痕）。
 
-> **2026-10-07 更新（用户同意）**：同一逻辑延伸到 `explicit`。证据：连测 9 张**纯面部特写**
-> （blush / shy / rolling eyes / angry＋咬牙 / **orgasm face(ahegao)** / torogao / empty eyes /
-> crying / naughty tongue），rating 最高只到 `questionable`，**没有任何一张到 explicit**；
-> 反例是"旗袍 ＋ crotch rope ＋ 用皮带绑在大腿内侧的按摩棒"那张：rating=explicit，
-> **却连一个裸露标签都没有**（tags 只有 `crotch rope / vibrator under clothes / hitachi magic wand`
-> 一类题材标签）。⇒ rating 这道闸拦的是**题材**，不是关键点。
-> 所以 `explicit` 不再一刀切 BLOCK：**命中关键点才 BLOCK**，否则降级 REVIEW，并在输出里多打一行
-> `escalated: rating=explicit but no key-point tags` —— 人工过目时一眼可辨"题材过杀 vs 真露点"。
-> **风险仍由用户承担** ✓。
+> **同一逻辑适用于 `explicit`：rating 闸拦的是题材，不是关键点。** 实测：9 张纯面部特写最高只到
+> `questionable`；反面是"旗袍＋crotch rope＋衣服下的按摩棒"那张 —— rating=explicit 却零裸露标签。
+> ⇒ **命中关键点才 BLOCK**，否则降级 REVIEW，并加一行
+> `escalated: rating=explicit but no key-point tags`（人工一眼分辨"题材过杀 vs 真露点"）。**风险由用户承担。**
 
-> **2026-10-07 第二次更新（用户同意）——姿势不是关键点**：四组姿势实测（横一字马 / 纵向一字马 /
-> 扎马步＋分腿杆 / M 字开脚，全部**衣着完整**）：
-> · 横一字马那张 rating **只有 `sensitive`**，却因一个 `spread legs` 标签被判 **BLOCK**；
->   用户亲眼复核："没露，尺度甚至比同批其它几张还小" ⇒ **姿势被当成关键点是过杀** ✗。
-> · 纵向一字马（`standing split / leg up`）与 M 字开脚（`legs up`，侧视）**都没有**触发 `spread legs`。
-> · 分腿杆（`spreader bar`）模型认识：WD14 直接打出 `spreader bar`，画面也是标准横杆＋脚镣形态 ✓。
-> 改动：`spread legs` 从 `BLOCK_TAGS` **移出**，进入新的**姿势表 `POSE_TAGS`** ——
-> 单独出现（衣着完整）时归 REVIEW 并在输出里标 `pose-level: spread legs`；
-> **只有与关键点同现、或 rating=explicit 时**才升级 BLOCK。
-> 同时把 `cameltoe / partially visible vulva / vulva / labia / visible clitoris` 从"靠 rating 兜底"
-> **提升为硬 BLOCK**（它们是真关键点，不该只在 explicit 时才拦）。
-> ⚠️ 注意阈值副作用：纵向一字马那张的 `cameltoe` 置信度落在 0.30～0.35 之间 ——
-> 默认 `--threshold 0.35` 时它是 REVIEW，一旦用 `--threshold 0.30` 就会因 `cameltoe` 变 BLOCK。
-> 该图人眼复核同样"没露"，所以 `cameltoe` 是否也该降为条件式（像 `spread legs`），留待用户决定。
+> **姿势不是关键点。** 实测四组衣着完整的姿势（横一字马 / 纵向一字马 / 扎马步＋分腿杆 / M 字开脚）：
+> 横一字马 rating 仅 `sensitive`，却因 `spread legs` 被判 BLOCK（人眼复核"没露"）⇒ 过杀；
+> 另两组未触发该标签；`spreader bar` 模型认识（WD14 直接打出该标签）。
+> ⇒ `spread legs` 移出 `BLOCK_TAGS`，进入**姿势表 `POSE_TAGS`**：衣着完整时单独出现 ⇒ REVIEW ＋
+> `pose-level: spread legs`；与关键点同现或 rating=explicit ⇒ BLOCK。
+> 反向把 `cameltoe / partially visible vulva / vulva / labia / visible clitoris` 提为**硬 BLOCK**
+> （真关键点，不该只在 explicit 时才拦）。
+> ⚠️ 阈值副作用：`cameltoe` 置信度落在 0.30–0.35 ⇒ `--threshold 0.35` 判 REVIEW、`0.30` 判 BLOCK
+> （该图人眼同样"没露"）。`cameltoe` 是否也改条件式：**待用户决定**。
 
 **关键点表**（命中即 BLOCK，即 `BLOCK_TAGS`）：`nipples`、`puffy nipples`、`pussy`、`penis`、
 `anus`、`bare crotch`、`crotch`、`completely nude`、`nude`、`topless`、`bottomless`、
@@ -69,19 +58,22 @@ large breasts, huge breasts}`。逻辑：`explicit` ＋命中 `NUDITY_TAGS` 或 
 
 ## 规则二：人工审核通道 = **只给路径**，不要嵌入 ✗
 
-⚠️ **实测更正（2026-09-24）**：原本按工具说明（"This is for the human, not the model"）推断
-`dsh_show_media` 不会把图带进 agent 上下文 —— **实际会** ✗：把一张 BLOCK 级的图用
-`dsh_show_media` 贴出来后，**工具结果把图片送进了 agent 上下文**（agent 确实"看到"了它）。
-所以 **`dsh_show_media` 不能当"安全的人工审核通道"** ✓。
+⚠️ **`dsh_show_media` 会把图带进 agent 上下文**（实测，与其工具说明相反）：把一张 BLOCK 级的图用
+它贴出来，工具结果里的图片块就进了上下文（agent 确实"看到"了它）。**不能当"安全的人工审核通道"。**
 
 正确做法：
 
 > **命中 BLOCK 的图：既不要 `read_image`，也不要 `dsh_show_media`。**
-> 只在回复里**给文件路径**（纯文本），由人**自己在本地打开**判断 ✓✓ —— 这才是真正不进模型上下文的通道。
+> 用 **`dsh_show_gallery`**（面板插件 `dsh-show-media` 的浏览卡）让人在浏览器里看：
+> 它只把**句柄**放进工具结果，图由浏览器自己取，**模型上下文增量为零** ⇒ 这是"不进模型上下文"的合规通道 ✓✓。
+> 面板没装/没挂上时退回老办法：只在回复里**给文件路径**（纯文本），由人自己在本地打开 ✓。
 > 命中 REVIEW：仅当关注标签温和（`bare legs`、`navel`、`collarbone` 这类）时才可看 ✓；
-> 否则同样**只给路径** ✓。
+> 否则同样走上面两条通道 ✓。
 
-这条的代价是人的操作多一步（自己去开文件 ✓），换来的是**账号风险为零** ✓ —— 值得。
+> 用法：`dsh_show_gallery(folder="<目录>", pattern="*.png", sort="name-desc", limit=100)`；
+> 也可以直接 `paths=[...]` 指定几张。
+
+这条的代价是人的操作多一步（切到浏览卡 / 自己开文件 ✓），换来的是**账号风险为零** ✓ —— 值得。
 
 ## 规则三：边界针对**关键点**，不针对裸露程度
 
@@ -93,7 +85,7 @@ large breasts, huge breasts}`。逻辑：`explicit` ＋命中 `NUDITY_TAGS` 或 
 
 所以负面词要**点对点**，不要写一大片保守词把画面压成"粽子" ✗。
 
-## 规则四：让图天生安全的两招（实测有效）
+## 规则四：让图天生安全的两招
 
 1. **角色 LoRA 会拖出它的默认服装** ✗。作者通常会在模型页给出技巧：
    「若默认服装残留，就把它的部件写进负面」——实测把默认战斗服的部件
@@ -114,7 +106,7 @@ large breasts, huge breasts}`。逻辑：`explicit` ＋命中 `NUDITY_TAGS` 或 
 
 ---
 
-## 打码能不能换来"可看"？实测（2026-09-29）
+## 打码能不能换来"可看"？
 
 对四块同级面板做 6 种变体、共 24 张、一次闸门调用（`[measured]`）：
 
@@ -152,12 +144,12 @@ large breasts, huge breasts}`。逻辑：`explicit` ＋命中 `NUDITY_TAGS` 或 
 - **闸门必须在你要动手的粒度上跑**：要切面板就在面板粒度上判定，别拿裁片的判定去推断整图。
 - 反过来，**合成图（拼图、贴人物后的整图）要按整图重新过闸门**——四块都 REVIEW 的拼图整体仍可能是 BLOCK。
 
-脚本：（我们的实验）（本实验的矩阵）、
+脚本：`agent_work\pixiv_publishing\experiments\multiview_citlali\censor_study.py`（本实验的矩阵）、
 同目录 `censor_panels.py`（一次通过的分块打码 + 单次闸门）、`auto_censor.py`（按格子扫描——**已被本实验证伪**，保留作反例）。
 
 ---
 
-## 反向案例：**本来能看的图，平涂打码后反而 BLOCK**（2026-09-30 实测）
+## 反例：**本来能看的图，平涂打码后反而 BLOCK**
 
 同一构图的两个文件（588×721，同一角色的同一张插画），只差两处局部编辑：
 
@@ -181,7 +173,7 @@ large breasts, huge breasts}`。逻辑：`explicit` ＋命中 `NUDITY_TAGS` 或 
 
 ---
 
-## 规则五：BLOCK 的处置 = **人工打码审核通道**（2026-09-30 定案）
+## 规则五：BLOCK 的处置 = **人工打码审核通道**
 
 BLOCK 不是对这张画的判词，而是"**agent 自己不许看**"的保护动作。**多模态类任务里人的反馈是最高判据** ——
 文件所有者本人看过、并由他指定盖哪里之后，agent 看那张**打码产物**是正当的，**不需要**再靠闸门认可。
@@ -207,10 +199,10 @@ python libs/wd14-gate/scripts/gate_review.py IMG... --sheet s.png  # BLOCK 多�
 5. **授权只能来自文件所有者本人**。"我觉得无害""它看起来正常"都不是授权；agent 也不能用"我自己先打码"
    来给自己开路 —— 打哪里是人的判断，不是自动扫描能算出来的（见上一节：判定依赖上下文，不只看被盖住的像素）。
 
-### ⚠️ mask 自查的两个陷阱（2026-09-30 首次实操踩到）
+### ⚠️ mask 自查的两个陷阱
 
 - **不要打开"整图叠色"的 mask overlay 来自查。** 那类图是**整幅原图**加一层半透明色，看它就等于把
-  **未打码的原图**送进上下文，**正好绕过这套机制要防的东西**（首次实操就这么犯了一次）。
+  **未打码的原图**送进上下文，**正好绕过这套机制要防的东西**。
   允许的自查只有两种：① **数字**（面积 %、bbox、连通块形状/数量）；② **只裁 mask 那一小块**再裁图看
   （`crop_view.py`），绝不整图叠色。
 - **打码脚本要按 mask 回贴、且保持画布尺寸**：`out = base`；只在 bbox 内做 `crop → 缩 → NEAREST 放大`

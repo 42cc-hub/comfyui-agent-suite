@@ -2,8 +2,8 @@
 
 For the job "I have a reference illustration of an interior and I want **controlled** depth/line
 control maps, or the camera of that reference so a second object can be placed at the right
-scale". Written after a full session on a convenience-store illustration (2026-09-29); every
-number below is from that session, tagged `[measured]` (our own runs) or `[observed]`.
+scale". Every number below is tagged `[measured]` (our own runs) or `[observed]`, and comes from
+one convenience-store illustration set.
 
 ## 1. Conventions (agree them with the human before writing code)
 
@@ -42,8 +42,8 @@ Without the guard the division by ~0 produces NaN and a Jacobian singular value 
 
 **Weights and losses — the split that matters** `[measured]`:
 - **Human lines: plain L2** (weight 1 each). With a Cauchy loss the optimiser *abandons* one of
-  them for free — we watched a 220 px labelled line settle at a 37° residual while the cost
-  stayed ~0, because there was no other data to pull against.
+  them for free — a 220 px labelled line settles at a 37° residual while the cost
+  stays ~0, because there is no other data to pull against.
 - **Machine-detected lines: Cauchy via IRLS** (drop them if their best residual stays above
   ~5–12°). They are the noisy majority and must never outvote the human's constraints: with
   length weighting alone, a long detected edge (600 px) counts ~2.7× a short human line (220 px).
@@ -158,13 +158,13 @@ Whichever you pick, print the measured factor; it self-corrects for any mask/bas
 ## 7. The finisher: whole-image img2img at denoise 0.6, no ControlNet
 
 `[measured]` One 30 s pass unified a two-stage composite: the inpaint seam disappeared and the
-lighting/colour came together. The same pass run on the reference itself produced the best-looking
-image of the session — but that is the *ceiling*, not a reconstruction: at 0.6 the reference's own
+lighting/colour came together. The same pass run on the reference itself looked even better —
+but that is the *ceiling*, not a reconstruction: at 0.6 the reference's own
 layout and props survive (its shopping basket, its framing), so it proves only that "layout right
 + 0.6 repaint" is a strong finisher. Use it as the **last** step, after the layout is settled, and
 do not mistake it for recovery.
 
-## 8. Toolchain left behind (all under （我们的实验）)
+## 8. Toolchain (all under `agent_work\pixiv_publishing\experiments\bg_control\`)
 
 | script | role |
 |---|---|
@@ -198,9 +198,8 @@ Everything renders through `PreviewImage` (`type=temp`), so nothing lands in `ou
 
 ---
 
-## Recovering perspective — a human's line annotation → camera → control maps（自入口 SKILL.md 搬入 2026-10-13）
+## Recovering perspective — a human's line annotation → camera → control maps
 
-> 来源：`SKILL.md` 的同名章节，2026-10-13 入口瘦身时**整段**搬来，正文未改（只调了标题层级与交叉引用）。
 
 
 Full playbook, measured numbers and the toolchain: **`references/perspective_and_scene_geometry.md`**.
@@ -212,9 +211,9 @@ The shape of it, in the order that matters:
   as free Euler angles (they let an optimiser report `pitch = −424°` and call it a fit).
 - **The human labels each line with its family — that is what makes a hard constraint safe.**
   Human lines: plain L2, weight 1. Machine-detected lines: Cauchy via IRLS, dropped above ~5–12°.
-  A Cauchy loss on *human* lines lets the optimiser abandon one for free (seen: a 220 px labelled
-  line parked at a 37° residual at cost ≈ 0); and priors must weigh like a line, or f drifts to
-  the bound to buy a marginally better line fit (seen: f = 285 px, h-fov 122°).
+  A Cauchy loss on *human* lines lets the optimiser abandon one for free (a 220 px labelled
+  line can park at a 37° residual at cost ≈ 0); and priors must weigh like a line, or f drifts to
+  the bound to buy a marginally better line fit (f = 285 px, h-fov 122°).
 - **Residual** = angle between the line and the direction from its midpoint to that family's
   projected VP. Guard the **VP-at-infinity** case (direction ⊥ optical axis) explicitly, or the
   division by ~0 poisons the whole solve.
@@ -223,8 +222,8 @@ The shape of it, in the order that matters:
   focal from 30° to 90° — f completely unobservable, only pitch (≈ +28°) is; **one extra line in any
   family** pins that VP and makes f observable; two near-parallel lines of one family add almost
   nothing (their VP is at infinity), so ask for lines that fan out.
-- **Assume the drawing is not a projection, and prove it with numbers.** In the session's
-  illustration the case's shelf-edge families imply a 48° down-pitch while the fixture verticals
+- **Assume the drawing is not a projection, and prove it with numbers.** The case's shelf-edge
+  families imply a 48° down-pitch while the fixture verticals
   imply ≈ 0°; with 40 detected lines the robust fit still pinned roll/pitch at the parameter bounds
   with a 12° median residual. When the input is squishy, deliver **largest consistent subset +
   outlier list + a per-line residual overlay** (green/yellow/red), never a forced camera.
@@ -243,12 +242,12 @@ The shape of it, in the order that matters:
   them in `input/dsh_ctrl/` and pass `dsh_ctrl/<file>` (a bare filename = HTTP 400); `LoadImage`'s
   MASK is output index 1 and equals **1 − alpha**.
 - **Two-stage compositing must pin ONE scale anchor.** The character's pixel size comes from the
-  human's mask, the background's scale from your geometry — nothing ties them, and the session got
-  a **2.30× giant**. Fix: `d` = ray through her feet ∩ floor; `h_expect = f·H_char/d`;
+  human's mask, the background's scale from your geometry — nothing ties them, so a missing anchor
+  gave a **2.30× giant**. Fix: `d` = ray through her feet ∩ floor; `h_expect = f·H_char/d`;
   `factor = h_expect/h_mask`; zoom the background about her feet (default) or shrink the mask, and
   **print the factor**.
 - **Finisher**: one whole-image img2img at **denoise 0.6, no ControlNet** (30 s) removed the
   two-stage seam and unified the lighting. Run on our composite it gave the best image *of our own
-  pipeline*; run on the reference it gave the best-looking image of the session but that is the
+  pipeline*; run on the reference it looked even better but that is the
   **ceiling, not a reconstruction** — at 0.6 the reference's own layout and props survive.
 

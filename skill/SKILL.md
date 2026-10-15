@@ -3,7 +3,7 @@ name: comfyui-image-generation
 description: Generate images through a local ComfyUI server via its HTTP API, including the Illustrious (SDXL anime) and Anima (qwen-image) model pipelines, LoRA selection/trigger-word lookup, submit/poll/save automation, Blender-authored ControlNet/LLLite control maps (depth, OpenPose pose with hands, img2img), cutting the background out of renders or existing illustrations (local SAM matting, chroma key, or a hosted image-edit model) with measured scoring against a ground truth, and self-checking a finished render with a trained detector suite (people/hands/feet boxes, finger-and-toe count suspicion, gag/blindfold, rope mask) via `scripts/check_parts.py`. Use when rendering, iterating on, or cutting out images instead of using a hosted image API, or when a render needs its hands/feet/digits verified before delivery.
 allowed-tools: Read Write Edit Bash
 license: MIT
-compatibility: Requires a running ComfyUI server (<你的 ComfyUI 安装目录>, conda env sdenv, port 7187, NVIDIA GPU). Uses `node` (Node 18+) for the API calls; Blender 5.1 at `<你的 Blender 安装目录>` for the control-map pipeline; `ffmpeg` optional only if audio->image conversion is needed elsewhere. Matting additionally needs `pip install segment-anything` (small pure-Python package) and the SAM ViT-B checkpoint that ships with this skill at `models/sams/sam_vit_b_01ec64.pth`.
+compatibility: Requires a running ComfyUI server (G:\\ComfyUI_new, conda env sdenv, port 7187, NVIDIA GPU). Uses `node` (Node 18+) for the API calls; Blender 5.1 at `E:\\Program File\\blender` for the control-map pipeline; `ffmpeg` optional only if audio->image conversion is needed elsewhere. Matting additionally needs `pip install segment-anything` (small pure-Python package) and the SAM ViT-B checkpoint that ships with this skill at `models/sams/sam_vit_b_01ec64.pth`.
 metadata:
   version: "1.12"
   skill-author: local (machine-specific operational notes)
@@ -16,9 +16,23 @@ request/response flow, the two model pipelines on this machine — **Illustrious
 and **Anima (qwen-image)** — and everything that happens *after* a picture exists: ControlNet /
 Blender-authored control maps, masked local repaint (smart crop, local and cloud-assisted),
 upscaling and final-size reduction, matting, comic-page tiling, cloud API editing, human-in-the-loop
-masking/Photoshop handoff, image localization/measurement, and the safety gate that decides whether
-a picture may enter the agent's context at all.
+masking/Photoshop handoff, image localization/measurement, and the safety gate that decides whether a picture may enter the agent's context at all.
 
+## How these docs are written
+
+Rule, trigger, threshold, anti-pattern, tool pointer — nothing else: no incident stories, no chronology,
+no dates/attributions on a rule, no migration notes, no conclusion told twice; quantitative evidence stays,
+one line, tagged `[measured]`/`[corpus]`/`[rule]`. Every rule must stand alone for a mid-file reader.
+
+## Working mode — **default: semi-auto**（用户没说的不做）
+
+Unless the user hands over the decision ("你来定 / 自行决定 / 不用问我"), run in **semi-auto**: do exactly the
+action asked — **no extra steps, no unrequested model/parameter/prompt change, no unasked retry or multi-round
+loop**; show each result (one panel call) before continuing; when you cannot judge the picture yourself (is the
+hand broken? may it ship?) **stop and hand it to the human** — "I think it's fine" is not an acceptance result;
+report **facts** (path, seed, size, seconds, detector output), never impressions; money/batch/irreversible
+actions get announced first. Contract + write-permission boundary + self-check checklist:
+**`references/modes_and_discipline.md`**.
 ## When to use
 - You want to generate images on the local GPU (not a hosted API) from text prompts.
 - You need to apply a LoRA to a base model and want its activation/trigger tags.
@@ -28,8 +42,8 @@ a picture may enter the agent's context at all.
 - You need to **fix a detail only a few pixels wide** on a finished image (a shoelace, an eyelet) without disturbing the rest → SmartImageCrop + `SetLatentNoiseMask` + SmartImageStitcher; see `references/upscaling.md` and `references/local_repaint_bigcanvas.md`.
 - The deliverable is a **comic page** — N images tiled into one image with dividers and lettering, in reading order → see `references/comic_page_layout.md`.
 - The local stack is structurally weak at the task — **text inside the image** (Chinese calligraphy, signage), adding objects on top of a hand-edited base → call a **cloud** model and paste the answer back by mask: see `references/cloud_edit_and_merge.md`.
-- **A human must supply rough 2D input** (a painted mask, a few points/edges) or do real Photoshop work on this host → see the Human-in-the-loop section and `references/human_in_the_loop.md`. **When handing a file to Photoshop (`ps_edit`): ONE file per round — opening a second file while one is already open FREEZES Photoshop on this host (measured 2026-10-06; the human had to kill the process and unsaved work was lost).**
-- You must **know exactly where something is** before masking it (which pixels are the rope, where the face sits, which of two strengths is better) → see the Locating-things section and `references/grid_localization.md`. **要给某块区域做掩版时，先在四条路里选一条** —— ① 检测框（本机、免费、最常用）② 视觉模型分色（云端 ~10 秒，语义身份最清楚）③ 网格+坐标估计 ④ 画布让人涂（最稳但要人）：取舍、实测数字与命令见 **`references/localization_and_masks.md`**。
+- **A human must supply rough 2D input** (a painted mask, a few points/edges) or do real Photoshop work on this host → see the Human-in-the-loop section and `references/human_in_the_loop.md`. **When handing a file to Photoshop (`ps_edit`): ONE file per round — opening a second file while one is already open FREEZES Photoshop on this host (measured; the process must be killed and unsaved work is lost).**
+- You must **know exactly where something is** before masking it (which pixels are the rope, where the face sits, which of two strengths is better) → see the Locating-things section and `references/grid_localization.md`. **要给某块区域做掩版时，先回答四个问题（形状/有没有遮挡/周围复杂吗/能不能上传云端），再在六条路里选一条** —— ① 检测框 / 骨架膨胀 / 头框内接椭圆（本机免费，默认先试）② **SAM 提示式分割**（给框+点，1~2 秒，边界最贴形状）③ 云端视觉模型分色（只传**切片**、先过 WD14 闸门，语义身份最清楚但花钱）④ 网格数格子 → 矩形或**内接椭圆**（圆/方物体两条命令）⑤ **切片 + colorblock 加减法**（周围简单、目标突出时最省；边界模糊处一律"**先外扩目标、再减掉确定的非目标**"）⑥ 画布让人涂（最稳但要人）。**几条路是零件、可以拼**（检测给粗位置、SAM 给边界、色块给同类、最后 `mask_compose --union/--sub` 组合）：取舍、实测数字、可抄的命令与交付前核对见 **`references/localization_and_masks.md`**。
 - You need a **body-part mask without asking a human to paint one** → the local OpenPose node + `pose_keypoints.py` give per-part boxes (feet/legs/face/arms/hands/torso) and can write the mask: see the auto-localization section of `references/local_repaint_bigcanvas.md`. Reliable on standing/kneeling; **extreme poses (all fours, suspension) lose joints** → ask for a rough stroke or use `SAM3_Detect`.
 - **Before any image enters your own context** — every vision read uploads the picture to a model provider → run the local WD14 gate first: see the Safety-gate section and `references/output_safety_gate.md`.
 - A figure is **complex** (two subjects in contact, a container/rig, a crowd, an unusual camera, a foreground foot/face) and you must decide **what to sample, what to program, what can be added later** → see the Planning section and `references/planning_and_decomposition.md`.
@@ -49,36 +63,37 @@ a picture may enter the agent's context at all.
 | GPU | RTX 3060 Laptop, 6 GB (vram `NORMAL_VRAM`, async offload) |
 | Blender | `<你的 Blender 安装目录>\blender.exe` (5.1, headless needs `--factory-startup`) |
 | SAM (matting) | `models/sams/sam_vit_b_01ec64.pth` inside this skill + `pip install segment-anything` |
-| Upscalers | `models/upscale_models/`: `4x-AnimeSharp.pth` (**default**, best for illustration), `RealESRGAN_x4plus_anime_6B.pth`, `4xhfa2kludvaeswinir_v1.safetensors`. **`2x_AnimeJaNai_HD_V3_SuperUltraCompact.pth` was REMOVED (2026-09-25, user decision)** — it is visibly softer than the 4x models; it now sits in `<你的 ComfyUI 安装目录>\agent_work\_disabled_upscalers\` (out of ComfyUI's model list). Measured on a 2000×1368 illustration: |Laplacian| mean 6.08 / P99 86 (2x-AnimeJaNai) vs **9.56 / 160** (4x-AnimeSharp then Lanczos half). **Deliver with `4x-AnimeSharp → ImageUpscaleWithModel → Lanczos to the target width`**, never a native 2x model. |
-| Outbound network | **The shell has no direct internet.** HTTP times out; HTTPS via curl/.NET dies with `schannel: AcquireCredentialsHandle failed`. Only working path: local proxy `127.0.0.1:6132` + **Python (OpenSSL)** → scripts/fetch_url.py |
-| **NEVER TOUCH** | **`<你的 ComfyUI 安装目录>\output\`** — a **mixed** directory: the user's own files live there next to renders (notes, downloaded reference pngs, `output\漫画委托\` = the whole commissioned-project material). One date-based sweep by this agent destroyed 17 of the user's files (2026-09-25, unrecoverable: `os.remove` skips the Recycle Bin). **Never delete, move, or reorganize anything under `output/`.** |
+| Upscalers | `models/upscale_models/`: `4x-AnimeSharp.pth` (**default**, best for illustration), `RealESRGAN_x4plus_anime_6B.pth`, `4xhfa2kludvaeswinir_v1.safetensors`. **`2x_AnimeJaNai_HD_V3_SuperUltraCompact.pth` was REMOVED** — it is visibly softer than the 4x models; it now sits in `<你的 ComfyUI 安装目录>\agent_work\_disabled_upscalers\` (out of ComfyUI's model list). Measured on a 2000×1368 illustration: |Laplacian| mean 6.08 / P99 86 (2x-AnimeJaNai) vs **9.56 / 160** (4x-AnimeSharp then Lanczos half). **Deliver with `4x-AnimeSharp → ImageUpscaleWithModel → Lanczos to the target width`**, never a native 2x model. |
+| Outbound network | **The shell has no direct internet.** HTTP times out; HTTPS via curl/.NET dies with `schannel: AcquireCredentialsHandle failed`. Only working path: local proxy `127.0.0.1:6132` + **Python (OpenSSL)** → `scripts/fetch_url.py` |
+| **NEVER TOUCH** | **`<你的 ComfyUI 安装目录>\output\`** — a **mixed** directory: the user's own files live there next to renders (notes, downloaded reference pngs, `output\漫画委托\` = the whole commissioned-project material). Deletion here is **unrecoverable** (`os.remove` skips the Recycle Bin). **Never delete, move, or reorganize anything under `output/`** — file-by-file, by explicit name only. |
 
-## Cleaning up after a run (hard rules — 2026-09-25)
+## Cleaning up after a run (hard rules)
 
-**Workspace boundary (user rule, 2026-09-25): work inside `<你的 ComfyUI 安装目录>\agent_work\` only.**
-Everything outside it (`output\`, `input\`, `models\`, the ComfyUI tree, the Desktop/Downloads) is the user's
-territory: **never delete, move, rename or reorganize anything there unless the user spells it out for that
-exact file.** The agent's products live under `agent_work\` precisely so human-made and machine-made files do
-not get mixed — mixing is what makes an agent mistake a user's note for its own leftover.
+**Workspace boundary: work inside `<你的 ComfyUI 安装目录>\agent_work\` only.** Everything outside it (`output\`,
+`input\`, `models\`, the ComfyUI tree, Desktop, Downloads) is the user's territory: **never delete, move,
+rename or reorganize anything there unless the user names that exact file.** Agent products live under
+`agent_work\` so human-made and machine-made files cannot be confused.
 
-Cleaning is the one operation that **cannot be undone** here: `os.remove`/`Remove-Item` bypass the Recycle Bin,
-`vssadmin` needs admin rights we do not have, so there is **no recovery path**.
-If a name is lost, one partial rescue exists: the session transcript under
-`~/.dsh/sessions/<project>/<session>/session.v3.jsonl.zstd` (`zstd -d`, then JSON-decode each line) still
-holds the real filenames — .
+Cleaning **cannot be undone**: `os.remove`/`Remove-Item` bypass the Recycle Bin and there is no recovery path.
+Last resort for a lost name: the session transcript `~/.dsh/sessions/<project>/<session>/session.v3.jsonl.zstd`
+still holds the real filenames — `tools/recover_names_from_session.py`.
 
 1. **List first, delete second.** Print every path + size + mtime before removing anything — even when the
    request is a casual "clean up the intermediate files".
 2. **Whitelist by filename.** Never delete by "directory + age" or "directory + size": coarse conditions
-   sweep user files (that is exactly how the accident above happened).
+   sweep the user's files.
 3. **Mixed directories are off-limits**: `<你的 ComfyUI 安装目录>\output\`, `<你的 ComfyUI 安装目录>\input\` (except the
    staging subdir below), Desktop, Downloads. Touch them only file-by-file, by explicit name.
-4. **Prove "it is a duplicate" before deleting it**: sha256, or a pixel diff. (Example: `puffy_binding/out14/**`
-   vs `final/**` diff = **0.0** ⇒ true copies, safe; identical diff to two different candidates ⇒ they are copies.)
+4. **Prove "it is a duplicate" before deleting it**: sha256, or a pixel diff of **0.0**.
 5. **`input/dsh_edit/` is the one safe-to-empty directory** — it is pure staging; every script re-copies its
    inputs from the project dirs before each run.
 6. **Never delete**: the user's hand-made files (PS handoffs, hand-painted mask layers), authored sources,
    `final/` dirs, exported pages, or any file whose name looks like a note / script / reference.
+
+**Production form — never write into `output\`.** Generate with **`PreviewImage`**, not `SaveImage`: the result
+lands in `temp\` and comes back via `GET /view?filename=..&type=temp`; `temp\` is **wiped on restart**, so
+anything to keep is **explicitly re-saved** into the workspace/task dir as a delivery step. `output\` stays a
+by-filename whitelist (§3).
 
 ## Safety gate: check before you look (hard rule)
 
@@ -97,11 +112,11 @@ python libs/wd14-gate/scripts/nsfw_gate.py out/*.png            # pixel-statisti
 | `REVIEW` | sensitive / `questionable` **without** a key-point tag / **`explicit` without any key-point tag**（`escalated`）/ **only a pose tag**（`pose-level`，如 `spread legs`）/ watch-tag hit | viewable |
 | `BLOCK` | **命中关键点标签**（`nipples`、`pussy`、`penis`、`anus`、`crotch`、`nude`、`topless`、`bottomless`、`presenting`、`clitoris`、`sex`、`cum`、`cameltoe`、`partially visible vulva`、`vulva`、`labia`、`visible clitoris` …）；或 `explicit` **且**命中关键点/姿势标签 | **never view** — see below |
 
-> **A `BLOCK` image gets a path in the reply, nothing else.** Not `read_image`, and **not
-> `dsh_show_media`** either — that tool's result *does* re-enter the agent's context (measured
-> 2026-09-24), so it is not a safe review channel. Text path only; the human opens it locally.
+> **A `BLOCK` image gets a path in the reply, nothing else.** Not `read_image`, and **not `dsh_show_media`**
+> either — its result *does* re-enter the agent's context (measured). Review one with
+> **`dsh_show_gallery`** (folder or `paths`): only a handle enters the tool result ⇒ **zero** context cost.
 >
-> **两次放宽（用户同意，2026-09-24 与 2026-10-07）：硬边界是关键点，既不是 rating，也不是姿势。**
+> **两次放宽：硬边界是关键点，既不是 rating，也不是姿势。**
 > 依据（实测）：9 张纯面部特写（blush / shy / rolling eyes / angry+咬牙 / **orgasm face(ahegao)** /
 > torogao / empty eyes / crying / naughty tongue）rating 最高只到 `questionable`，**无一到 explicit**；
 > 而"旗袍 + crotch rope + 用皮带绑在大腿内侧的按摩棒"那张 rating=explicit，**却一个裸露标签都没有**；
@@ -117,8 +132,7 @@ python libs/wd14-gate/scripts/nsfw_gate.py out/*.png            # pixel-statisti
 
 Full rules, the measured evidence and the "make images safe by construction" tricks (negating a
 LoRA's default outfit, writing `opaque fabric, fully covered`): `references/output_safety_gate.md`.
-**Censoring a BLOCK image to look at it** `[measured]`: mosaic the **whole panel** (16–64 px cells;
-32–64 often reaches `OK`) — *not* the one suspicious spot, and never a flat colour fill (a flat
+**Censoring a BLOCK image to look at it** `[measured]`: mosaic the **whole panel** (16–64 px cells; 32–64 often reaches `OK`) — *not* the one suspicious spot, and never a flat colour fill (a flat
 patch reads as a censor bar and can rate worse). The verdict depends on **context**, not only on
 the pixels you covered: a panel whose middle 50% was cut out stayed `explicit` with the same tags
 (`vibrator under clothes`, `vibrator cord`), and scene-level tags (`exhibitionism`, `public
@@ -183,8 +197,10 @@ match again**. Full checklist (PS-side tricks, anime-specific notes, what classi
 ## Start / stop ComfyUI
 Launch the server in the background from the ComfyUI dir. **It must run with full file access** — otherwise the sandbox denies writes to its database/settings/output dirs (outside the workspace) and it exits with `[sandbox: file access denied under workspace-write mode]`.
 
+**First-time install (repo/tag, torch+CUDA incl. the Blackwell/sm_120 branch, model dir layout, verification): `references/installing_comfyui.md`.**
+
 ```powershell
-# clear any stale db lock, then launch (needs danger-full-access for G:\ and AppData writes)
+# clear any stale db lock, then launch (needs danger-full-access for the ComfyUI root and AppData writes)
 Remove-Item '<你的 ComfyUI 安装目录>\user\comfyui.db-wal','<你的 ComfyUI 安装目录>\user\comfyui.db-shm' -ErrorAction SilentlyContinue
 & 'python' 'main.py' '--port' '7187' '--listen' '127.0.0.1' 2>&1
 ```
@@ -220,14 +236,14 @@ It reads the node-graph JSON, submits, polls, and writes the first output image 
 
 **Before a heavy run, empty the queue** — a stale job from an interrupted session will otherwise
 take the GPU and your submit just waits behind it. Use the project script
- or this one-liner (single quotes inside, so it
+(`tools/clear_queue.py`) or this one-liner (single quotes inside, so it
 survives PowerShell):
 
 ```bash
 python -c "import json,urllib.request as u;[print(p, u.urlopen(u.Request('http://127.0.0.1:7187'+p, data=json.dumps(d).encode(), headers={'Content-Type':'application/json'}), timeout=20).status) for p,d in (('/interrupt',{}),('/queue',{'clear':True}))]"
 ```
 
-**Hard limits on a 6 GB card** (from the 2026-09-24 incident; they are not negotiable):
+**Hard limits on a 6 GB card** (not negotiable):
 sampling **side ≤ 2400**, stay **≤ 1536 native** when upscaling a crop for sampling, and
 **downscale any 4× intermediate before it enters a sampler** (≈52 MP ceilings are unreachable
 here). The upscale model runs on the 4× intermediate *outside* the sampler, which is fine.
@@ -247,7 +263,7 @@ Reference graph: `references/illustrious_workflow.json`. Key nodes:
 - **EmptyLatentImage** → e.g. `1024x1024`, batch 1.
 - **KSampler** `model=lora[0]|ckpt[0]`, `positive/negative`, `latent_image`, `seed`, `steps≈28`, `cfg≈6`, `sampler_name=euler_ancestral`, `scheduler=karras`, `denoise=1`.
 - **VAEDecode** `samples=ksampler[0]`, `vae=ckpt[2]`.
-- **SaveImage** `filename_prefix`, `images=vae_decode[0]`.
+- **PreviewImage**（**默认**；落 `temp\` 再按文件名取回，不写 `output\`）. 老工作流里的 `SaveImage` 只在"用户明确要求落盘到某个目录"时用，`filename_prefix` 指向工作区而不是 `output\`.
 
 ### Image sizes & hi-res for video
 - Landscape/anime usually `1024x1024`. For a **vertical (9:16) video** use portrait SDXL ratios like `832x1216` or `896x1152`; `1080x1920` itself is valid but slow on 6 GB.
@@ -257,8 +273,8 @@ Reference graph: `references/illustrious_workflow.json`. Key nodes:
 
 ### Sampling resolution decides the *failure mode*, not just the framing
 
-Measured 2026-09-21 (Illustrious, no LoRA, `cfg 8` / 20 steps, paired seeds, hands counted by a
-human; full data in our own measurements):
+Measured (Illustrious, no LoRA, `cfg 8` / 20 steps, paired seeds, hands counted by a
+human; full data in the pixiv project's `experiments/scale_vs_fingers/`):
 
 | canvas | hands with **extra** fingers (≥6) | hands with **missing** fingers (≤4) |
 |---|---|---|
@@ -283,7 +299,7 @@ human; full data in our own measurements):
 
 ### Subject pixel area: the character box must not be smaller than ~700×1200
 
-A second, independent rule (user-provided, 2026-09-23). It is about **how many pixels the character
+A second, independent rule. It is about **how many pixels the character
 gets**, not how big the canvas is — so it governs a different failure mode from the finger-invention
 result above and the two do not contradict each other:
 
@@ -307,8 +323,7 @@ result above and the two do not contradict each other:
   (`SmartImageCrop` → `SetLatentNoiseMask` → `SmartImageStitcher`, cost tracks the crop — and the graph is
   **bit-exact outside the mask** (`max Δ 0`) as long as the crop is **not rescaled** (`force_divisibility=8`,
   `min_resolution` already cleared by the mask bbox) and `crop_mask` is wired into the stitcher's `mask`.
-  A 2026-10-03 note here blamed the stitcher for 4.31 % out-of-mask drift; **that attribution was wrong and is
-  retracted** — measured 2026-10-04 (cases P1–P7): the drift comes from `SmartImageCrop` resizing the crop
+  Drift is **not** the stitcher's fault: measured (cases P1–P7) it comes from `SmartImageCrop` resizing the crop
   (0.0542 % even with no sampling at all) and from leaving the stitcher's `mask` unwired (0.3352 %).)
 
 Practical recipe: trial at low res to settle framing → re-render the winner at a canvas big enough
@@ -326,7 +341,7 @@ Anima is a newer (qwen-image) pipeline. It is NOT a standard checkpoint: load th
 - **EmptyLatentImage** → `1024x1024`, batch 1.
 - **KSampler** `model=lora[0]`, `sampler_name=euler`, `scheduler=simple`, `steps≈30`, `cfg≈8`, `denoise=1`.
 - **VAEDecode** `samples=ksampler[0]`, `vae=vae_loader[0]`.
-- **SaveImage** `filename_prefix`, `images=vae_decode[0]`.
+- **PreviewImage**（**默认**；落 `temp\` 再按文件名取回，不写 `output\`）. 老工作流里的 `SaveImage` 只在"用户明确要求落盘到某个目录"时用，`filename_prefix` 指向工作区而不是 `output\`.
 
 ### Anima LoRA: DeepSeek 鲸鱼娘
 - `lora_name = character\E9B2B8E9B1BCE5A898Fix.wTK8.safetensors` (card title `鲸鱼娘_fix`)
@@ -384,7 +399,7 @@ Anima is a newer (qwen-image) pipeline. It is NOT a standard checkpoint: load th
 5. **细节修正** —— **PS + 局部重绘**：手指、脚趾、`vibrator`、rope（一处一趟，0.2–0.4）。
 6. **放大到发布尺寸** ⇒ 能结束就结束；还要瞳孔这类更细的 ⇒ **SmartCrop 工作流**。
 
-**四条纪律**：⓪ **每一步的产物都要用 dsh_show_media 嵌进对话给用户看**（只报路径＝用户看不到；要和旧版对照就用 compare_with）—— 用户 2026-10-03 反复要求过；① **多张只属于第 1 步** —— 编辑阶段一次一张（小 denoise 样本间差别极小），
+**四条纪律**：⓪ **每一步的产物都要用 dsh_show_media 嵌进对话给用户看**（只报路径＝用户看不到；要和旧版对照就用 compare_with）；① **多张只属于第 1 步** —— 编辑阶段一次一张（小 denoise 样本间差别极小），
 **只有 denoise > 0.6（比如转 IL）才多抽几张**；② **"放大"要发生不止一次**，
 因为手指/脚趾/瞳孔这类东西**没有足够像素就画不好**，每次放大对应下一层细节的尺度；
 ③ **denoise 决定"读"还是"重写"**：0.2–0.4 材质 / 0.5–0.6 比例与换引擎 / 0.8–0.9 结构拓扑
@@ -392,10 +407,12 @@ Anima is a newer (qwen-image) pipeline. It is NOT a standard checkpoint: load th
 
 
 ## Writing the prompt — structure, negation, costume swaps
-结构（分组、空行、否定、换装）、Anima 专属调整、A/B 实测、536 条语料统计，全部正文在
+结构（分组、空行、否定、换装）、**简洁（一个意图一处说，§2b：长度=稀释）**、Anima 专属调整、A/B 实测、536 条语料统计，全部正文在
 **`references/prompt_writing.md`**；可直接抄的正向前缀、四套负面模板、8 条骨架模板与词表在
-**`references/prompt_cheatsheet.md`**。写提示词前先开速查表；固定缺陷块见 prompt_writing.md §2、
-服装词见 §3、逐姿势 tag 表见 prompt_cheatsheet.md §4。
+**`references/prompt_cheatsheet.md`**（写前先开；固定缺陷块见 §2、服装词见 §3、逐姿势 tag 表见 §4）。
+**提交前必做 tag review（硬步骤）**：先写"场景清单"再逐 tag 对照查互斥与残留（来路非本场景从头推，或
+服装·姿势·道具·地点·视角·画幅任一变化 ⇒ 必做）；只通读不算做过（**token ≠ 意识到 token 矛盾**）。
+全表与步骤：**`references/tag_review.md`**。
 
 ## Blender-driven control maps — depth / pose / hands
 When pose, framing, focal length or foreshortening must be exact, author the scene in Blender and
@@ -415,7 +432,7 @@ render control maps instead of describing it in words；depth 与 pose 走**同�
 纯色幕布 → `chroma_key.py`。完整选路表、实测数字与评分方式：**`references/matting_and_cutout.md`**。
 
 ## Upscaling (2x / 4x) — after generation, before delivery
-链路：**`UpscaleModelLoader` → `ImageUpscaleWithModel` → `SaveImage`**，不过扩散、秒级完成。
+链路：**`UpscaleModelLoader` → `ImageUpscaleWithModel` → `PreviewImage`**（默认进 `temp\`；要留就显式转存到工作区），不过扩散、秒级完成。
 默认 `4x-AnimeSharp` + Lanczos 收到目标宽度；交付尺寸与清晰度证明见
 **`references/upscaling.md`**（含模型下载地址、四种放大器的实测对比与"2x 模型已移除"的决定）。
 
@@ -517,7 +534,7 @@ hands_state(visible|not_visible|zero_detected) / rope / persons / persons_masks 
 ② `mask_compose.py` 是 agent-in-the-loop 的掩版组合器（图元 ∪/∖ 已有掩版），不必一次给对。
 ③ 打底（underpaint）三条路与掩版规矩见 **`references/underpaint_and_stencil.md`**。
 
-### 两个"模型不认识的新角色"同框、且不许反左右（2026-10-13 第 3 份报告的标准解）
+### 两个"模型不认识的新角色"同框、且不许反左右（标准解）
 1. 先出**不挂任何角色 LoRA 的版式底图**，方向一律写**画面坐标系**，负面点名 `mirrored composition`、
 `swapped positions`；2. `check_parts.py --person-masks` 拿每人一块互不重叠的掩版；3. **每次只挂一个人
 的 LoRA**（1.0/1.0 + sidecar 完整触发词表）`denoise 0.65~0.75`，串行两次；4. 每人的重绘提示词里都
@@ -526,7 +543,7 @@ hands_state(visible|not_visible|zero_detected) / rope / persons / persons_masks 
 ## Finding a LoRA and its trigger words
 **检索与下载**（civitai 用 `?query=` 而不是 `?search=`、shell 直连 403、十六进制文件名、base 匹配、
 校验与放置）见 **`references/lora_sourcing.md`**；下面只讲"拿到之后怎么读它的触发词"。
-- **Keep `strength_model` and `strength_clip` at 1.0** (user rule, 2026-09-29). Interpolability in
+- **Keep `strength_model` and `strength_clip` at 1.0.** Interpolability in
   latent space is *empirical, not a strict property*: a LoRA is a trained perturbation, and
   scaling its strengths does not guarantee a smooth blend — it can quietly degrade the identity,
   costume or rendering while a thumbnail still looks "close enough". Only deviate when the LoRA
@@ -549,7 +566,7 @@ hands_state(visible|not_visible|zero_detected) / rope / persons / persons_masks 
   - `ss_network_module` (e.g. `networks.lora_anima`) → whether it needs a special pipeline.
   - `modelspec.title` → display name.
   - **`ss_tag_frequency` CAN be empty** — many Civitai character LoRAs keep the trigger elsewhere. Check the LoRA-Manager sidecar `<name>.metadata.json` → **`civitai.trainedWords`** (and `civitai.model.trainedWords`); that holds the real trigger + descriptor tags (e.g. `hu_tao_genshin_impact, brown hair, hat, long hair, ...`).
-  - **Best source of all: `civitai.images[].meta.prompt`** — the sidecar stores the **generation prompt of each preview image**, i.e. the author's own tag table for that character, and it is more complete than `trainedWords`. In the 2026-09-21 session a character's chest badge was absent from *both* `trainedWords` variants and showed up only there, as `lanyard`. One line to read it:
+  - **Best source of all: `civitai.images[].meta.prompt`** — the sidecar stores the **generation prompt of each preview image**, i.e. the author's own tag table for that character, and it is more complete than `trainedWords`. A character's chest badge was absent from *both* `trainedWords` variants and showed up only there, as `lanyard`. One line to read it:
     `for im in (m.get("civitai") or {}).get("images", []): print(im["meta"].get("prompt"))`
   - **Finding the word is not the same as being able to suppress it.** Negating that badge (`lanyard, id card, name tag, badge, nameplate, tag, neck strap, cord around neck, hanging ornament`) did **not** remove it — **character priors outrank the negative prompt**. Changing the outfit did remove it. If a negative produces no visible change, the element is baked into the LoRA's default look: change something else (costume, pose, crop) or edit the pixels.
   - **Author-recommended sampler/steps/CFG** often live in the same sidecar's `civitai.model.description` (e.g. "Steps 30 / CFG 5-7 / DPM++ 2M SDE Karras"). Prefer those over the generic defaults below.

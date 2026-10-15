@@ -9,10 +9,10 @@ Two services are wired up on this host:
 
 | Service | Script / route | Notes |
 |---|---|---|
-| 百炼 / DashScope `qwen-image-edit-max` | `scripts/bailian_image_edit.py edit IN.png OUT.png "<instruction>" [--ref R.png] [--prompt-file F]` (key: `skill/config/keys.json（仓库不带 key）`) | synchronous, **20–50 s**, output re-rendered by the model |
+| 百炼 / DashScope `qwen-image-edit-max` | `scripts/bailian_image_edit.py edit IN.png OUT.png "<instruction>" [--ref R.png] [--prompt-file F]` (key: `scripts/bailian_key.json`) | synchronous, **20–50 s**, output re-rendered by the model |
 | GPT-image (OpenAI) | no local script — hand the human a **package** (crop + mask + prompt) and merge what comes back | better at **legible text**; needs an explicit mask (`transparent = editable`) |
 
-## ① 参考图必须给 —— 否则人物和环境都会对不上（用户 2026-10-03 强调）
+## ① 参考图必须给 —— 否则人物和环境都会对不上
 
 **`--ref` 里的图是内容参考（不是控制图），它承担的是"这是谁、这是哪儿"。**
 你不给，模型就按自己的先验编 —— 结果是**人物长得不像、环境跟你脑子里的场景不是一回事**。
@@ -46,9 +46,9 @@ python scripts/bailian_image_edit.py edit IN.png OUT.png "<instruction>" \
   because you are going to downscale the answer back.
 - **`.jpeg` files that are really WEBP** (LoRA previews) make `read_image` fail — convert with
   PIL first.
-- **第三方上传风险:** a hosted edit call **uploads the picture to a third party**. Run the
+- **Pixiv-adjacent safety:** a hosted edit call **uploads the picture to a third party**. Run the
   local gate first (`references/output_safety_gate.md`).
-- **Input-side content moderation rejects R-18 instructions (measured 2026-10-02).** Asking
+- **Input-side content moderation rejects R-18 instructions (measured).** Asking
   DashScope/百炼 to *add rope bondage* came back in ~21 s as **HTTP 400** with
   `{"code": "DataInspectionFailed", "message": "Input data may contain inappropriate content"}`
   (a `request_id` is returned; no image is produced). The filter reads the **instruction**, not the
@@ -57,24 +57,23 @@ python scripts/bailian_image_edit.py edit IN.png OUT.png "<instruction>" \
     to get the same content through is evading a provider's safety control; on a
     `DataInspectionFailed` stop, tell the user, and move that step to the **local stack** (local
     ComfyUI has no input moderation; this account's own gate is `output_safety_gate.md`).
-  - **Split one job into steps.** In the same session the innocent siblings of that refused edit
-    went through fine — *"把并排躺着的两人摆成太极式中心对称躺姿"* ✓ and *"把床单上的太极图案换成
+  - **Split one job into steps.** The innocent siblings of that edit went through fine —
+    *"把并排躺着的两人摆成太极式中心对称躺姿"* ✓ and *"把床单上的太极图案换成
     普通床单被子枕头"* ✓ — only the rope step was refused ✗. Sequence: **cloud for pose / layout /
     background / colour, local for bondage** (and merge back by mask as usual).
-  - **NEVER write the forbidden thing even to forbid it** (user, 2026-10-03). An instruction that
+  - **NEVER write the forbidden thing even to forbid it.** An instruction that
     said *"画面里不要出现绳子"* was refused with `DataInspectionFailed` — the filter matches
     **keywords in the instruction**, so mentioning 绳子 *at all* (negated or not) flags the request.
     Use positive framing (*"clean white background"*) and simply **do not name** what you do not
     want. This is the **same trap as the positive prompt** (`prompt_writing.md` §5: negation does
     not bind — `no apron` reads as *apron*), now with a second consequence: a refusal.
-  - **The filter looks at the input IMAGE as well as the text** (measured 2026-10-03): a
-    front-facing seated pose with an upraised leg (clothed, no rope, no exposed skin beyond the
-    shoulders) was refused even though the instruction contained no banned word — while the same
-    character's standing turnaround went through fine. So **composition is part of the input
-    review**: sitting poses facing the viewer, upraised legs and spread skirts are high-risk;
+  - **The filter looks at the input IMAGE as well as the text** (measured): a front-facing
+    seated pose with an upraised leg (clothed, no rope, no banned word in the instruction) was
+    refused, while the same character's standing turnaround passed. So **composition is part of the
+    input review**: sitting poses facing the viewer, upraised legs and spread skirts are high-risk;
     **side / back views of the same pose pass far more often**.
 
-## What they can NOT do (measured 2026-09-26, both services)
+## What they can NOT do (measured, both services)
 
 | Expectation | Reality |
 |---|---|
@@ -113,7 +112,7 @@ pre-call file, never overwrite it.
 | **subject-only** (`--mode bird`) | the tool also repainted the background (day-lit sky, brighter paper) | mask = (old ∪ new subject silhouette) dilated + feathered; **background stays bit-exact from the original** |
 | **rect / split** | the user wants to blend by hand in Photoshop, or two strengths must be combined | whole-rect paste (leave the seam to the human), or split at a vertical line with a 30 px ramp (e.g. body 0.3 + sky 0.5) |
 
-Two extra guards, both invented after a visible failure:
+Two extra guards:
 
 - **Dark guard.** In the feather ring of a night scene, take `min(base, result)` per pixel: the
   cloud version's sky is usually *lighter*, and the lighter ring shows up as a halo around the
@@ -129,7 +128,7 @@ a railing, a hair strand — should keep its **original pixels**: build a colour
 ## Verify before you judge
 
 ```bash
-python tools/diff_report.py（薄封装，自带） base.png merged.png --mask mask.png
+python tools/diff_report.py base.png merged.png --mask mask.png
 #   in-mask  >12:  30%   ← the edit happened
 #   out-mask >12: 0.0000%  ← nothing else moved
 ```
@@ -151,9 +150,8 @@ different axis are normal; keep them as counterexamples.
 
 ---
 
-## Cloud APIs — generation and editing (and how to merge the answer back)（自入口 SKILL.md 搬入 2026-10-13）
+## Cloud APIs — generation and editing (and how to merge the answer back)
 
-> 来源：`SKILL.md` 的同名章节，2026-10-13 入口瘦身时**整段**搬来，正文未改（只调了标题层级与交叉引用）。
 
 
 Local ComfyUI is the default; a hosted model earns its place where the local stack is
@@ -165,7 +163,7 @@ signage), adding/refining objects on top of a hand-edited base, and scene-level 
 | 百炼 / DashScope `qwen-image-edit-max` | `scripts/bailian_image_edit.py edit IN.png OUT.png "<instruction>" [--ref R.png] [--prompt-file F]` | synchronous, 20–50 s, model re-renders (no alpha, its own output size) |
 | GPT-image (OpenAI) | hand the human a **package** (crop + mask + prompt) — no local script | best at **legible text**; mask convention is **transparent = editable** |
 
-**① 参考图是必给的，不是可选（用户 2026-10-03 强调）。** `--ref` 里的图是**内容参考**：
+**① 参考图是必给的，不是可选。** `--ref` 里的图是**内容参考**：
 画**某个角色**时，云端不会照你的文字去认人 —— 先在**本地出该角色的三视图**（正/侧/背，干净背景）
 或找一张该角色的图当参考；有**具体场景**需求时同理（环境/道具/光线也要给参考图）。
 **不给参考图 ⇒ 环境和人物都会对不上**（模型按自己的先验编）。
@@ -183,15 +181,15 @@ python scripts/bailian_image_edit.py edit IN.png OUT.png "<instruction>" --ref c
 - **参考图是"内容参考"，不是控制图** —— 所以它**指定"是什么"，不指定"怎么摆"**：
   只给骨架图 ⇒ 姿势错、还多出一个人；**姿势要用文字描述**。两张图的分工是
   **`--ref` 定人物与环境，文字定动作与构图**。
-- **Hosted models refuse R-18 edits outright** (measured 2026-10-02): DashScope/百炼 answered
+- **Hosted models refuse R-18 edits outright** (measured): DashScope/百炼 answered
   **HTTP 400 `DataInspectionFailed`** — *"Input data may contain inappropriate content"* — to an
   instruction that asked to **add rope bondage**. The filter reads the **instruction text**, so no
   amount of wording craft gets it through, and **rewording to slip past it is evading a provider's
   safety control — don't do it**. Split the job instead: the innocent siblings of the same edit went
   through fine (*"摆成太极式中心对称躺姿"* ✓, *"把床单上的图案换成普通床单被子枕头"* ✓) ⇒
   **innocent steps → cloud, rope/BDSM/undress steps → local**.
-  2026-10-03 补两条：**连"不要 XX"都不能写** —— 指令里写了 *"画面里不要出现绳子"* 本身就吃了 400
-  （过滤器匹配**关键词**，"禁止"也算提到；同"正向写否定无效"那个坑）；以及**输入图也会被审** ——
+  **连"不要 XX"都不能写** —— 指令里写了 *"画面里不要出现绳子"* 本身就吃了 400
+  （过滤器匹配**关键词**，"禁止"也算提到；同"正向写否定无效"那个坑）；**输入图也会被审** ——
   一张正面朝观众的坐姿＋抬腿（穿着完整、无绳）被拒，而同角色的站姿四视图能过 ⇒ **同一姿势的侧视/背面更容易过**。
 - **They do not respect the mask.** GPT-image's answer differed from the sent crop by >12 in
   **3.57 %** of the *outside-mask* pixels, with a ±6 px alignment sweep choosing (0,0) as best —

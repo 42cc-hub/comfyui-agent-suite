@@ -27,8 +27,8 @@ content, **median 44 tags / 666 chars / 4 groups (9 lines)** for IL, 59 tags / 1
 **两组要求，别混：**
 
 1. **空行（`\n\n`）分隔"区块"。** 场景块 / 人物块 / 风格块之间空一行。这是给人**手动改**用的：
-   改一条时只需定位一个区块。`[measured]` 2026-09-21 交付过一版把六组压成一行的提示词，
-   用户当场要求返工（"人的注意力是有限的，处理不了那么多黏着的滔滔不绝的文本"）。
+   改一条时只需定位一个区块。`[measured]` 把六组压成一行的版本会当场被要求返工
+   （人的注意力有限，处理不了黏着的长文本）。
 2. **单换行（`\n`）分隔"要素组"。** 同一个区块里，**一个语义要素占一行**：姿势一行、缚法一行、
    表情一行、服装一行。
 
@@ -85,7 +85,7 @@ masterpiece, best quality, absurdres, ultra detailed, ... extreme details,
 
 ## 1. 固定风格块（可直接抄）`[corpus]`
 
-### 伪写实 / 无描边（"3D 渲染感"）`[measured] 2026-09-29`
+### 伪写实 / 无描边（"3D 渲染感"）`[measured]`
 
 想要**没有描边、靠渐变和真实光照塑形**的半写实画面（参考图 `146351817_p0` 那种），
 本机可用的杠杆有四个，缺一个都会退回平涂：
@@ -214,6 +214,42 @@ Anima 吃形体/材质系。
 
 ---
 
+## 2b. 简洁：长度本身就是成本 —— **一个意图一处说** `[rule]`
+
+> **好提示词一定是简明扼要的，不是一篇论文。** 条件是按 token 竞争注意力的：词越多，每个词分到的
+> 相对权重越低 ⇒ **你真正想要的那几个 tag 被稀释掉**，于是"什么都写了"＝"什么都没到位"，
+> 根本弄不出想要的东西。写得长不等于更保险，只等于更平均。
+
+**必须删掉的两种写法**
+
+1. **正负双写同一件事**（最常见，也最浪费）：正向 `no shoes`，负向 `shoes, boots, sneakers`，
+   再补一句 `not wearing shoes` —— 同一个意图说了三遍，既占预算又互相打架
+   （正向里的否定模型读不懂，§5 已实测）。**想排除 ⇒ 只在负向写最准的词；正向里不许出现否定。**
+2. **正向同义堆叠**：`long hair, very long hair, flowing long hair, beautiful long hair` ——
+   第 2–4 个不提供任何新信息，只是把同句里的服装/姿势/场景摊薄。**留最准的那一个**
+   （先查它到底指什么，§9）。
+
+**操作规则（可照抄）**
+
+- 每个内容组只留**承重的那几个词**；分组空行（§0 硬性要求）让"整组删掉"不伤别的组；
+- 负向 ~30 tag 是**上限不是目标**；模板里的通用缺陷块**别重复抄两遍**（§2）；
+- 画面不对时第一反应是**删词**，不是加词或加权（§8、§11：**先减词，再调权重**）；
+- 长度自查：正向要素 9 行上下（§0）；超了先问"**删哪一个**"，而不是"还缺什么"；
+- 判据沿用：**加一个词如果没让画面可辨地改变，它就是噪声，删掉。**
+  （文末"不是越多越好"那节有正/负两组实测。）
+
+**三个检查维度，互不替代**：§0 管**结构**（一行一组）· 本节管**总量**（多不多 / 有没有重复）·
+tag review（`references/tag_review.md`）管**对不对**（互斥、残留、与当前场景冲突）。
+
+**反模式**
+
+- 把"更保险"理解成"再补两个同义词"；
+- 把用户的每句形容词都翻成一个 tag —— 用户给的是**意图**，不是 tag 清单；
+- 只增不减：上一版少写了什么，这版就加上去，从不回头看该删哪个（prompt 会单调膨胀，
+  直到想要的 tag 全部被稀释）。
+
+---
+
 ## 3. 绳索 / 束缚词表（本项目的主战场）`[corpus]`
 
 80% 的 corpus 是绳缚内容，这部分是它最有价值的产出。按使用频次排（df = 出现该 tag 的提示词数）：
@@ -232,7 +268,7 @@ Anima 吃形体/材质系。
 | `arms bondaged behind back` | 63 | 非规范写法，但**大量使用**（见下） |
 | `legs bondaged` | 47 | 同上 |
 | `blindfold` / `black blindfold` | 32 / 9 | |
-| `suspension` | 29 | 吊缚；**单独写容易变成倒吊**，配合 `leg suspension` / `other leg bent` 约束。**悬挂的正确搭配是 `suspension` + `hang up`**（用户规则，2026-09-29）：只写"吊"的散文（`hanging in midair` 之类）常常落成"坐在床上/被托着"，而 `hang up` 能把"被绳子吊起、身体离地"这层读出来 |
+| `suspension` | 29 | 吊缚；**单独写容易变成倒吊**，配合 `leg suspension` / `other leg bent` 约束。**悬挂的正确搭配是 `suspension` + `hang up`**：只写"吊"的散文（`hanging in midair` 之类）常常落成"坐在床上/被托着"，而 `hang up` 能把"被绳子吊起、身体离地"这层读出来 |
 | `harness ball gag` / `gag harness` / `ring gag` / `cleave gag` / `wiffle gag` | 28 / 12 / 22 / 5 / 2 | 口球细分；`harness` 是"带头带"的那款 |
 | `shibari over clothes` | 22 | 隔衣缚（避免模型自动脱衣的关键词） |
 | `skindentation` | 15 | 绳勒进皮肤（danbooru 原生 tag，肉感全靠它） |
@@ -327,7 +363,7 @@ second girl:{ ... }
 5. **`left` / `right` / `below` / `above` 的绑定是防"角色互换"的最强单点修正；**
 6. 负面加 `multiple girls`（单人时）或 `2girl`（要三人时）来钉住人数。
 
-### Anima 的多主体形态 `[measured]` 2026-09-19
+### Anima 的多主体形态 `[measured]`
 
 Anima（qwen-image）用**同一套块结构但写句子**，`;` 独立成行：
 
@@ -443,7 +479,7 @@ Alice Thymefield from Zenless Zone Zero, with animal ears, black pantyhose, ... 
 所以：**先减词，再调权重**（见 checklist 最后两条）；要用就用 1.1–1.3，并且一次只动一个，
 否则分不清是权重还是词表长度在起作用。
 
-### 8b. 与语料原题面的实测对照（2026-09-29，5 例同图复现）
+### 8b. 与语料原题面的实测对照（5 例同图复现）
 
 把同一批图的**原题面**与**本次为复现写的题面**放在一起量（脚本
 `experiments/compare_prompts.py` → `experiments/prompt_style_compare.md`）：
@@ -461,7 +497,7 @@ Alice Thymefield from Zenless Zone Zero, with animal ears, black pantyhose, ... 
 
 1. **权重的"数量"要减，"幅度"不要加。** 原题面平均只 3 个权重而我写了 18 个——这条要学；
    但它们把峰值拉到 2.0–3.0（甚至 `(shibari:4.0)`）**不是要跟的目标**：
-   **用户规则（2026-09-29）：权重加大画面容易崩坏，除非确实需要，否则不要超过 ~1.5。**
+   **权重加大画面容易崩坏，除非确实需要，否则不要超过 ~1.5。**
    要让某样东西"必须出现"，正确手段是**把词命名准**（原生 tag / 独占一行 / 位置词）+
    **在负向压掉它的替代品**，而不是把权重往上推。
 2. **画风不是质量词能替代的。** 原题面 6/6 都带同一个六人 `@画师` 块，且 LoRA 栈里**总**有画风
@@ -479,7 +515,7 @@ Alice Thymefield from Zenless Zone Zero, with animal ears, black pantyhose, ... 
 
 ## 9. 写之前先查这个词到底指什么
 
-日本网络 / 服装 / 同人词汇，写进提示词前先查（在线百科 `dic.pixiv.net/a/<tag>`、萌娘百科）。
+日本网络 / 服装 / 同人词汇，写进提示词前先查（pixiv 百科 `dic.pixiv.net/a/<tag>`、萌娘百科）。
 意译外来语和网络黑话经常是错的，一个错读要烧一整批：
 某主题词被当成字面道具画了 12 张，实际含义是服装轮廓，根本不涉及道具。
 
@@ -516,9 +552,16 @@ Alice Thymefield from Zenless Zone Zero, with animal ears, black pantyhose, ... 
 
 ## 11. 提交前 checklist
 
+**第 0 项（先做）：tag review —— 逐 tag 对照"场景清单"，见 `references/tag_review.md`。**
+提示词来路不是为当前场景从头推的（LoRA 触发词 / 抄来的工作流 / 上一版 prompt / 别的 task），
+或者场景变了任意一项（服装、姿势、道具、地点、视角、画幅）⇒ 这一步**不许跳**；
+只通读一遍不算做过了（模型输出 token ≠ 意识到 token 之间的矛盾）。
+
 - [ ] 区块之间空行、要素各占一行（9 行上下），不是一坨？
 - [ ] 风格块**只出现一次**，且质量词后面跟的是**真风格**（不只是 `masterpiece, best quality`）？
 - [ ] 正向里没有 `no / without / nothing / except / only`？
+- [ ] **没有正负双写**同一意图？（想排除 ⇒ 只在负向说一次，正向不许出现否定，§2b/§5）
+- [ ] **没有同义堆叠**？（同一要素写了两遍以上 ⇒ 只留最准的那一个，§2b）
 - [ ] 要排除的东西（原服装、不想要的读法、多余的人、不想要的材质）在负面里，且负面 ≤ 30 tag？
 - [ ] 场景语汇按底模走：IL 用 tag、Anima 用句子？
 - [ ] 换装？→ 正向 `instead of X` **且** 负面含 X **且** 角色块里删掉了 X？
@@ -558,9 +601,8 @@ python sample_prompts.py        # -> analysis/sample_prompts.txt（52 条最远�
 
 ---
 
-## Writing the prompt — structure, negation, costume swaps（自入口 SKILL.md 搬入 2026-10-13）
+## Writing the prompt — structure, negation, costume swaps
 
-> 来源：`SKILL.md` 的同名章节，2026-10-13 入口瘦身时**整段**搬来，正文未改（只调了标题层级与交叉引用）。
 
 
 Rules distilled from the local `comfyui_PromptManage` plugin
@@ -574,12 +616,11 @@ adjustments, hard-won A/B measurements, **and a 536-prompt corpus harvested from
 口球、腿几何、状态、镜头）、if→then 规则表、参数表。**展开的规则与证据**
 （每条数字的来源、A/B 实测）：`references/prompt_writing.md`。语料统计复现：
 `experiments/prompt_organize/analyze_corpus.py` + `analyze_extra.py`
-。
+（在 `agent_work\pixiv_publishing\` 下）。
 
 **硬性要求：一级用空行（`\n\n`）分区块，二级用单换行（`\n`）分要素。** JSON 里写 `\n\n` 就是
-ComfyUI 界面里的空行。理由：提示词是给人**手动改**的，人的注意力有限——2026-09-21 交付过一版把
-六组压成一行的提示词，用户当场要求返工（"人的注意力是有限的，处理不了那么多黏着的滔滔不绝的
-文本"）。语料实测：**85% 的提示词在区块内部用单换行，中位 9 行 / 4 个空行区块**，所以正确粒度是
+ComfyUI 界面里的空行。理由：提示词是给人**手动改**的，人的注意力有限 —— 六组压成一行会被要求返工。
+语料实测：**85% 的提示词在区块内部用单换行，中位 9 行 / 4 个空行区块**，所以正确粒度是
 **行**——姿势一行、缚法一行、表情一行、服装一行；只有 4% 是一条到底。
 
 **分组顺序（经验值，来自 536 条实际提示词的平均位置）：**
@@ -655,11 +696,11 @@ Anima 中位 **1.50**、**51%** 在 1.5 以上（出现 `(shibari:4.0)`）。IL 
 会海报化。**先减词，再调权重。**
 
 **Check the tag's real meaning before writing it** (esp. Japanese net/fashion terms —
-在线百科 / 萌娘百科). One theme word was drawn literally as a prop for 12 images
+pixiv 百科 / 萌娘百科). One theme word was drawn literally as a prop for 12 images
 before the definition was checked; the correct reading was a garment silhouette. A
 wrong reading costs a whole batch.
 
-**提示词不是"越多越好"，正负都要适度 —— 写"承重的那几个"，不是写"齐全"。**（2026-09-21，用户纠正）
+**提示词不是"越多越好"，正负都要适度 —— 写"承重的那几个"，不是写"齐全"。**
 
 - **机制**：词表越长，每个词的相对权重越低（词表长度本身就是稀释）。堆到几十个词之后，
   新增的词不再增加控制力，只是把已有的词摊薄。
@@ -677,9 +718,8 @@ wrong reading costs a whole batch.
 
 ---
 
-## 两个"模型不认识的新角色"同框、且不许反左右（2026-10-13 第 3 份报告的标准解）（自入口 SKILL.md 搬入 2026-10-13）
+## 两个"模型不认识的新角色"同框、且不许反左右（标准解）
 
-> 来源：`SKILL.md` 的同名章节，2026-10-13 入口瘦身时**整段**搬来，正文未改（只调了标题层级与交叉引用）。
 
 1. **先出一张不挂任何角色 LoRA 的"版式底图"**，把布局与关系做对；方向一律写**画面坐标系**
    （`the girl on the left side of the image`、`leans sideways to her left`），负面点名
@@ -694,7 +734,7 @@ wrong reading costs a whole batch.
 
 | 东西 | 路径 |
 |---|---|
-| 套件根 | `<ANIME_DET_SUITE>`（`--suite` 或环境变量 `ANIME_DET_SUITE` 可覆盖） |
+| 套件根 | `<你的 ComfyUI 安装目录>\agent_work\experiments\anime_detection_suite`（`--suite` 或环境变量 `ANIME_DET_SUITE` 可覆盖） |
 | 产线入口 | `<套件>\scripts\locate.py` |
 | 推理环境 | `python`（ComfyUI 自己的 env，有 torch+ultralytics；`--python` 可换） |
 | 权重 | `<套件>\runs\<name>\weights\best.pt`；每层的默认权重写在 `locate.py` 顶部的 `DEF_*` |
@@ -714,7 +754,7 @@ wrong reading costs a whole batch.
 5. `rope` 只表示"**rope 模块有没有留下掩版文件**"（`present|missing`），**不代表图里没有绳** —— 本入口不做绳子检测。
 6. 更细的接口与实验记录在 `<套件>\docs\`：`integration.md`（接口与降级）、`runs.md`（R1~R49 实验）、`handover_20261012.md`（现状与待定项）。
 
-**契约 JSON 里给下游用的字段（2026-10-13 新增，都是加法式的）**
+**契约 JSON 里给下游用的字段（新增字段，都是加法式的）**
 - `points[].person_id` / `boxes[].person_id`：把点/框挂到具体某个角色上（多角色图做逐人处理时必需）。
 - `n_persons`（M2a 的 person 框数）与 `n_skeletons`（M1 链数）分开报；旧的 `n_people` 仍是骨架数（兼容）。
 - `boxes_all`：`boxes` **加上**兜底补的部位（专用脚 / 踝点外推 / 专用手），每个框带

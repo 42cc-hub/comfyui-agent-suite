@@ -106,7 +106,7 @@ No extra masking work, and it is exact by construction.
 
 ### Residual difference outside the mask
 
-**The stitcher is a pure cut-and-paste; it does not change anything by itself (measured 2026-10-04).**
+**The stitcher is a pure cut-and-paste; it does not change anything by itself (measured).**
 With the crop **not rescaled**, a passthrough (`crop_image → SmartImageStitcher`, **no sampler**) reproduces
 the original **bit-for-bit**: out-of-mask `>2/255` = **0.0000 %**, `max Δ 0` — and that holds with
 `Box Feather 32`, and with or without the stitcher's `mask` input. The **full sampled** graph is bit-exact
@@ -133,7 +133,7 @@ passthrough → no change). Script + raw numbers: `task/lumine_hospital_20261004
 > **Both attributions were wrong** — the numbers were real but they came from the crop resize and the unwired
 > mask, not from the stitcher, and the "0.23 %"/"4.31 %" figures are not properties of this route.
 
-## 预算怎么分：**抽卡修结构，重绘修微观**（用户定，2026-09-30）
+## 预算怎么分：**抽卡修结构，重绘修微观**
 
 > **多轮抽卡是留给"出底图"的；重绘不需要多轮。** 理由不是重绘不好用，而是**两者能修的东西不同**：
 
@@ -147,13 +147,13 @@ passthrough → no change). Script + raw numbers: `task/lumine_hospital_20261004
 - **"这个结构不对"＝继续重绘是浪费** —— 去抽卡（或改控制图），别在错的画面上打磨。
 - **结构一旦成立，重绘的边际收益就很小** —— 布局固定、角色身份由 LoRA/提示词钉住、外观已符合时，
   一遍就够；第二遍不会产生可辨的差异，而且**每一遍都在对 mask 外做一次 VAE 往返**（见上节），
-  还会把已经对的部分重新置于风险里。**实测（2026-09-30）**：同一张双人底图、4 个种子各做一遍
+  还会把已经对的部分重新置于风险里。**实测**：同一张双人底图、4 个种子各做一遍
   区域重绘，四张几乎没有可辨差异；mask 外的差异 mean 1.6 / p99 12（肉眼不可见），
   mask 内 mean 55–62（真改动）——**收益集中在"选定的一块"上，不在"多跑几轮"上**。
 - 所以：**底图的抽卡预算按"宏观失误模式"给**（双人易互换/人数错/合并、多人易污染 ⇒ 多抽几张），
   **重绘按"要修的那一块"给一次**，然后**在成品上验收**，而不是反复重绘。
 
-## 多人图里的分区重绘：只重绘"当前这个人"（用户定，2026-09-30）
+## 多人图里的分区重绘：只重绘"当前这个人"
 
 对一张已经成立的多人图做重绘时（全画布 + `SetLatentNoiseMask`，不动别处）：
 
@@ -162,7 +162,7 @@ passthrough → no change). Script + raw numbers: `task/lumine_hospital_20261004
 3. **提示词仍写整个场景，但其他人一律简化**成占位词：
    `another girl sitting beside her`（必要时加两三个不会污染的颜色词，如 `blue hair`），
    **不要**把另一个人的完整外观块写进去 —— 否则模型会按你的文字重画她、或把她的特征带到当前这个人身上。
-   实测（2026-09-30，Anima 双人）：这样写之后当前人物拿到自己的身份，另一个人保持原样、人数不变。
+   实测（Anima 双人）：这样写之后当前人物拿到自己的身份，另一个人保持原样、人数不变。
 4. **不能跨基底挂 LoRA**：这一轮想给第二个角色也挂 LoRA 时发现她的 LoRA 是 SDXL
    （`modelspec.architecture = stable-diffusion-xl-v1-base/lora`、tensor 键 `lora_te1_*`），
    而底图是 Anima（qwen-image）—— **挂不上**。要么整条流水线换成该 LoRA 的基底，
@@ -182,7 +182,7 @@ or its behaviour changes silently.
 
 > 宏观层面这条决定"这一步该给多少 denoise"：**0.2–0.4 材质 / 0.5–0.6 比例与换引擎 /
 > 0.8–0.9 结构拓扑 / 1.0 重抽**。整条主线见 `references/production_pipeline.md`。
-> 实测补充（2026-10-03，Anima 2000² 整图）：**绳"连到床框"这种拓扑，0.4/0.6/0.75 全出不来，0.9 才出来**；
+> 实测补充（Anima 2000² 整图）：**绳"连到床框"这种拓扑，0.4/0.6/0.75 全出不来，0.9 才出来**；
 > 而 0.4~0.75 这一档只改材质与颜色——**换材质/颜色靠提示词，不靠加 denoise**。
 
 `denoise` is a fraction of the sampler schedule, so the model's reach is a fraction of the
@@ -240,7 +240,7 @@ re-applies sharpening.
 
 ## 分区定 denoise：IL 只治人物，别碰场景结构
 
-**结论（2026-09-24 实测，代价见下）**：拿 IL 去"整体提升质感"是错的 —— 它会**重画结构**，
+**结论（实测，代价见下）**：拿 IL 去"整体提升质感"是错的 —— 它会**重画结构**，
 而 AI 生成图的结构（棋盘格线、棋子、建筑、文字）经不起重画。正确做法是**按区域分两次 inpaint**：
 
 | 区域 | denoise | 目的 |
@@ -315,7 +315,7 @@ answer back by the same mask. The crop/mask/scale arithmetic is unchanged; the e
 proving the answer respected the mask and protecting structures that must line up with the world
 outside the crop — both in `cloud_edit_and_merge.md`.
 
-## Runnable template, and the wire-up traps (smoke-tested 2026-09-26)
+## Runnable template, and the wire-up traps (smoke-tested)
 
 `references/smartcrop_repaint_workflow.json` is a complete graph — IL checkpoint + LoRA, two
 `CLIPTextEncode`, and:
@@ -344,14 +344,12 @@ Three things the smoke test (1200×800 base, a 260×260 white square, denoise 0.
    wire-up. (`SmartImageStitcher` gets the placement from `stitcher_info`, so it wants the mask in
    the crop's own coordinates.)
 3. **This route is bit-exact outside the mask — if the crop is not rescaled and the stitcher's `mask` is
-   wired** (`max Δ 0`, measured 2026-10-04). Earlier this bullet recorded 0.23 %/0.53 % drift and blamed the
-   route; that was a **misattribution** — the drift is `SmartImageCrop`'s resize (`force_divisibility=128` /
-   `min_resolution=768`) plus the un-masked paste-back, and it disappears at `force_divisibility=8` with
-   `crop_mask` fed to the stitcher's `mask`. See §"Residual difference outside the mask". The PIL route is
-   still worth preferring when you want the arithmetic explicit, but "0.0000 % vs 0.23 %" is no longer the
-   reason.
+   wired** (`max Δ 0`, measured). Drift of 0.23 %/0.53 % is **not** this route's fault: it is
+   `SmartImageCrop`'s resize (`force_divisibility=128` / `min_resolution=768`) plus the un-masked
+   paste-back, and it disappears at `force_divisibility=8` with `crop_mask` fed to the stitcher's
+   `mask`. See §"Residual difference outside the mask".
 
-## 自动定位部位——不必每次都请人画蒙版（实测 2026-10-02）
+## 自动定位部位——不必每次都请人画蒙版
 
 这台 ComfyUI **已经装好**姿态与分割节点，可以在**我们自己生成的二次元图**上自动定位部位：
 
@@ -370,7 +368,7 @@ Three things the smoke test (1200×800 base, a 260×260 white square, denoise 0.
 3. 坐标**归一化**，直接 `%d` 打印会全是 0（这个坑很像"检测失败"）；
 4. 有了关节坐标 ⇒ 按关节组取外接框（feet/legs/face/arms/torso）当**部位蒙版的初框**。
 
-已封装成 （上传→跑节点→取 history→换算像素→输出部位框，
+已封装成 `tools/pose_keypoints.py`（上传→跑节点→取 history→换算像素→输出部位框，
 `--mask legs=out.png` 还能直接写出该部位的蒙版 PNG），
 实测：`legs bbox=(309,805,513,1102)`、`face bbox=(300,307,563,361)`、`torso bbox=(243,489,620,806)`。
 **已知空白**：手部/脸部精细关键点在这类图上常缺失（这张图没出手点），必要时用 SAM 按框补分割。
@@ -391,9 +389,8 @@ why naming an invisible thing distorts the result.
 
 ---
 
-## 逐人掩版（多角色属性串扰的正解）（自入口 SKILL.md 搬入 2026-10-13）
+## 逐人掩版（多角色属性串扰的正解）
 
-> 来源：`SKILL.md` 的同名章节，2026-10-13 入口瘦身时**整段**搬来，正文未改（只调了标题层级与交叉引用）。
 
 同一张图里"谁被绑/谁自由、谁黑发/谁白衣"这类**属性独占**需求，提示词经常压不住（实测 8~10 次失败：
 模型会按颜色把道具配对、同类并置结构互相传染）。**结构性**解法是逐人掩版重绘 —— 一人一次 pass，
@@ -434,7 +431,7 @@ why naming an invisible thing distorts the result.
   并入该角色头部的椭圆；椭圆优先按 **M2b 的 face 框**（比 M2a 的 head 框紧）算，并与该角色自己的轮廓求交，
   否则两人靠一起时两圈"头光环"交叉，看起来就是一团奇怪的十字。
 - **`pose_coverage` < 0.7 就该人工看一眼**（该角色的可见关键点有多少落在掩版里）；掩版完全错时它会很低。
-- **覆盖策略（`--person-mask-cover`，默认 `auto`）**：用户 2026-10-13 定调 —— **宁可多盖**。
+- **覆盖策略（`--person-mask-cover`，默认 `auto`）**：**宁可多盖**。
   理由：用这套流程的基本都是 agent，做的是**中等/大尺寸特征**的重绘；"只改了一半个人、接缝卡在躯干上"
   比"多盖一点（含骨架之间的空隙，甚至蹭到一点道具）"糟得多；**细小特征本来就不指望 agent 做，人工来**。
   `auto` = 先算贴边掩版，关键点覆盖 < 0.9 就补上骨架凸包（外扩 3% 身高）——两张真实多角色图上都触发了，

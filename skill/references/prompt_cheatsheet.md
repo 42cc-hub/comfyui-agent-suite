@@ -2,7 +2,7 @@
 
 给写提示词时用的速查。**展开的规则与证据**在 `references/prompt_writing.md`；
 本表只放**可直接抄的块**和**查表用的词**。每条模板后面标了它的来源记录
-（`wf/<name>.json`，语料库在 （我们的实验））。
+（`wf/<name>.json`，语料库在 `agent_work\pixiv_publishing\experiments\prompt_organize\`）。
 
 30 秒流程：
 
@@ -52,7 +52,7 @@ year 2025, year 2024, score_9, score_8, score_7, detailed background, depth of f
 photorealistic textures,
 ```
 
-⚠️ **别把 IL 的 18-tag 风格块贴到 Anima 上**——你自己历史上 33% 的 Anima 记录这么干过，
+⚠️ **别把 IL 的 18-tag 风格块贴到 Anima 上**——33% 的 Anima 记录这么干过，
 而 Anima 语料的惯例是"句子 + `@画师` 触发词 + 权重 1.5–2.0"。
 ⚠️ `score_9, score_8_up, score_7_up` 只在 pony 底模上用；IL 上写 `score_*` 是噪声。
 
@@ -119,6 +119,9 @@ letterboxed, comic panel, text, watermark,
 | 某条绳不要 | 直接写进负面，可加权：`(crotch rope:1.1)` |
 
 **负面也要瘦身**：60+ 词的负面实测会过载（画面海报化），20 词左右才听话。
+**正向同样不许重复**：一个意图只说一次，想排除就只在负面写一遍（正向写 `no shoes` 等于白写）；
+同一要素别堆同义词（`long hair, very long hair, flowing long hair`）—— 长度本身就是稀释，
+多写的词会把你真正想要的那几个 tag 摊薄（`references/prompt_writing.md` §2b）。
 
 ---
 
@@ -187,12 +190,11 @@ masterpiece, best quality, absurdres, ultra detailed, high resolution, newest, h
 
 要点：**每块的"该角色自己的动作"必须写全**，否则两人做同一件事。
 
-> ⚠️ **`[measured]` 2026-09-29（本机 IL，2 个种子）**：`2girl` + 两个 `1girl` 块**不足以保证**
-> 第二个角色是女性。在 `straddling` / `girl on top`（上下叠压）这种构图下，两个种子里有 1 个把
-> 下方角色画成了男性（WD14 读出 `1boy, hetero, clothed female nude male, girl on top`）。
-> 加 `yuri` 修好了另一个种子，但**同一个失败种子加 `yuri` 仍然失败**——`yuri` 有帮助，但不是
-> 种子上稳定的。做法：两个女性角色必写 `2girl, yuri` **且**每个块里各自写 `1girl` + 外观，
-> **逐种子验证**；仍出男性就往负面加 `1boy, male, penis, hetero`（待验证）。
+> ⚠️ **`[measured]`（本机 IL，2 个种子）**：`2girl` + 两个 `1girl` 块**不足以保证**第二个角色是女性 ——
+> 叠压构图（`straddling` / `girl on top`）下 2 个种子里有 1 个把下方角色画成男性
+> （WD14 读出 `1boy, hetero, clothed female nude male, girl on top`）。做法：必写 `2girl, yuri`
+> **且**每个块里各自写 `1girl` + 外观，**逐种子验证**（加 `yuri` 修好了另一个种子，失败的那个仍失败）；
+> 仍出男性就往负面加 `1boy, male, penis, hetero`（待验证）。
 > 若不需要叠压关系，用 corpus 那种更安全的并列构图（`sitting side by side`, `kissing`）。
 
 ### T4 · IL 双人 · 关系标签（更短）— 源 `wf/xtll_lumi (5).json`
@@ -332,10 +334,10 @@ Her dress is rolled up by the crotch rope, revealing her white panties.
 | 拘束衣 | `bitchsuit`, `straitjacket`, `corset`, `spreader bar` | 15 / 13 / 7 / 5 |
 | 器物 | `pillory`, `stocks`, `handcuff`, `chain`, `leash`, `collar` | 用原生 tag，见 §3 T5 |
 
-### 整体缚法姿势（14 种实测，2026-10-02，Anima 直出 832×1216、2 种子/姿势）
+### 整体缚法姿势（14 种实测，Anima 直出 832×1216、2 种子/姿势）
 
 `✅` 一眼认得出、绳路合理 · `⚠️` 方向对但关键细节不到位（**0 个认不出**）
-
+语料：`pixiv_publishing/experiments/shibari_type/`（提示词、28 张图、联系表）
 
 | 日文名 | 英文 | 该抄的 tag | 结果 |
 |---|---|---|---|
@@ -408,10 +410,10 @@ Her dress is rolled up by the crotch rope, revealing her white panties.
 
 | 想要 | 怎么做 |
 |---|---|
-| 换角色 / 换装 | 正向 `X instead of Y` **＋** 负面含 `Y` **＋** 角色块里删掉 `Y` 的 tag（实测 0/4 → 4/4） |
+| 换角色 / 换装 | 正向 `X instead of Y` **＋** 负面含 `Y` **＋** 角色块里删掉 `Y` 的 tag（实测：0/4 → 4/4） |
 | 两人不互换 | 每角色一块 + `left/right` 或 `below/above` 或 `front/other` 标签 + 各自的动作与状态 |
 | **两人都是女性** | `2girl, yuri` + 每块写 `1girl` + 各自外观；**堆叠构图（`straddling`/`girl on top`）逐种子验证**，出男性就往负面加 `1boy, male, penis, hetero`（`[measured]` §3 T3） |
-| **器具/木枷/架子要落地** | 器具写**原生 tag**（`pillory, stocks`）进 tag 段，别只写在句子里；句子只做补充（`[measured]` 2026-09-29：只写句子时 WD14 读不出任何器物） |
+| **器具/木枷/架子要落地** | 器具写**原生 tag**（`pillory, stocks`）进 tag 段，别只写在句子里；句子只做补充（`[measured]`：只写句子时 WD14 读不出任何器物） |
 | 单人图别多画人 | 负面加 `people, person, girl` |
 | 落地绳不要悬吊 | 负面加 `hanging rope, suspension` |
 | 绳子别变缎带 | 负面加 `ribbon, satin ribbon` |
@@ -476,7 +478,7 @@ LoRA：`LoraLoader` 节点给强度（`strength_model` / `strength_clip`），
 
 - 所有"频次"= document frequency，全表数字取自 `analysis/tag_df.csv`
   （`analyze_corpus.py` 生成，与 `corpus_stats.md` 同源），语料 536 条有提示词的记录。
-- 统计脚本：（我们的实验）
+- 统计脚本：`agent_work\pixiv_publishing\experiments\prompt_organize\`
   的 `analyze_corpus.py` / `analyze_extra.py` / `compare_groups.py`；
   单 tag 查值：`check_cheatsheet_tags.py`。
 - **频次只是惯例，不是效果**；带"实测"的条目来自我们自己的对照出图，
