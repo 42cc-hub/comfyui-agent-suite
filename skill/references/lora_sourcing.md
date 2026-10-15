@@ -25,6 +25,8 @@ https://civitai.red/api/v1/models?query=<关键词>&types=LORA&limit=10&cursor=1
 
 **风险提醒**：civitai 的模型页/示例图里常有 NSFW 内容 ⇒ **不要用视觉工具去抓那些图** ✗
 （等于上传到模型服务商 ✓）。只看 JSON 字段就够 ✓（`trainedWords` 已经把外观描述全给你了 ✓）。
+**没有 LoRA、或 sidecar 里没写全时**，特征来源阶梯（Danbooru 系 / 萌娘·百度·维基·Pixiv 百科 / 看图兜底）
+见 `references/character_features.md` ✓。
 
 ## 二、下载：shell 会被 403，走浏览器
 

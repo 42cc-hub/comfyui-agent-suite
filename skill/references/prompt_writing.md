@@ -516,6 +516,7 @@ Alice Thymefield from Zenless Zone Zero, with animal ears, black pantyhose, ... 
 ## 9. 写之前先查这个词到底指什么
 
 日本网络 / 服装 / 同人词汇，写进提示词前先查（pixiv 百科 `dic.pixiv.net/a/<tag>`、萌娘百科）。
+角色的**特征 tag 从哪来、资料站的描述怎么翻成 tag**：`references/character_features.md`（含"找不到描述就看图"的门控做法）。
 意译外来语和网络黑话经常是错的，一个错读要烧一整批：
 某主题词被当成字面道具画了 12 张，实际含义是服装轮廓，根本不涉及道具。
 

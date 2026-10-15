@@ -21,11 +21,18 @@ import os
 import re
 import sys
 
+# Windows 控制台常是 GBK：收尾那行 ✅ 会让 print 抛 UnicodeEncodeError —— 检查其实已经通过了，
+# 却以非 0 退出、看起来像失败。统一转 UTF-8。
+try:
+    sys.stdout.reconfigure(encoding='utf-8', errors='replace')
+except Exception:
+    pass
+
 HERE = os.path.dirname(os.path.abspath(__file__))
 SKILL = os.path.dirname(HERE)
 ENTRY = os.path.join(SKILL, 'SKILL.md')
 # 少数引用指向 skill 之外：本机共享工具在 `agent_work\pixiv_publishing\pipeline\`，
-# 文档里一律写成 （工作区里 agent_work 那层）。发布版由
+# 文档里一律写成 `tools/xxx.py`（工作区里 agent_work 那层）。发布版由
 # release_build.py 把它们改写成"自带工具"的说明。这两类都按工作区解析，不存在才算断链。
 WORKSPACE = r'<你的 ComfyUI 安装目录>'
 WORKSPACE_AGENT = os.path.join(WORKSPACE, 'agent_work')

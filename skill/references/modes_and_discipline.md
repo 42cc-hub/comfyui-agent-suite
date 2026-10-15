@@ -41,7 +41,7 @@
 
 | 问题 | 工具 |
 |---|---|
-| 这张图能不能进我的上下文 | `libs/wd14-gate/scripts/wd14_gate.py`（BLOCK 就只给路径） |
+| 这张图能不能进我的上下文 | `libs/wd14-gate/scripts/wd14_gate.py`（BLOCK 就只给路径；要自己看则先打码：`scripts/tools/mosaic_censor.py`，全自动无人工时用 `scripts/tools/pose_censor.py`，**放行判据**用 `scripts/tools/gate_after_censor.py`：关键点词汇消失即放行、有残留即不放行） |
 | 尺寸 / 亮度 / 是不是全黑全白 | 一行 PIL/numpy 统计，**报数字** |
 | 人 / 手 / 脚 / 指趾 / 口塞 / 眼罩 / 掩版 | `scripts/check_parts.py`（套件检测器，出 JSON + flags） |
 | 重绘有没有渗出掩版 | `diff_report.py base out --mask m` → 看 **8/255** 那一档 |

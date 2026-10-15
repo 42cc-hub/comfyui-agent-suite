@@ -132,8 +132,8 @@ python libs/wd14-gate/scripts/nsfw_gate.py out/*.png            # pixel-statisti
 
 Full rules, the measured evidence and the "make images safe by construction" tricks (negating a
 LoRA's default outfit, writing `opaque fabric, fully covered`): `references/output_safety_gate.md`.
-**Censoring a BLOCK image to look at it** `[measured]`: mosaic the **whole panel** (16–64 px cells; 32–64 often reaches `OK`) — *not* the one suspicious spot, and never a flat colour fill (a flat
-patch reads as a censor bar and can rate worse). The verdict depends on **context**, not only on
+**Censoring a BLOCK image to look at it** `[measured]`: mosaic the **whole panel** (16–64 px cells; 32–64 often reaches `OK`) — *not* the one suspicious spot, and never a flat colour fill (a flat patch reads as a censor bar and can rate worse). Tools: `scripts/tools/mosaic_censor.py` (human-specified mask/boxes) and, **only in fully automatic mode with no human available**, `scripts/tools/pose_censor.py` (skeleton → chest + crotch band); both refuse to write a copy that hides nothing, and the censored copy **must** be re-gated before you look. If only the human needs to see it, use `dsh_show_gallery` instead — no censoring needed. Full procedure: `references/output_safety_gate.md` rule 5. **Censoring can backfire**: covering the underwear of a `REVIEW` image with a rectangle or mosaic (any colour) flips it to `BLOCK` — the clothing evidence goes away and `nude` appears. Painting garment *shapes* does **not** rescue it: on a nude base all fill colours still gate `BLOCK`, and a gate verdict is not a measure of how much you actually hid. **Pass rule for your own look at a censored copy**: `scripts/tools/gate_after_censor.py --src IMG --censored COPY.png` — it passes when the *key-point* words disappear (`nipples/pussy/penis/…`) even though `nude`/`censored` remain, and fails if any key point survives or a new one appears. **If you must cover, cover the whole band**; to make an image safer, add clothing.
+The verdict depends on **context**, not only on
 the pixels you covered: a panel whose middle 50% was cut out stayed `explicit` with the same tags
 (`vibrator under clothes`, `vibrator cord`), and scene-level tags (`exhibitionism`, `public
 indecency`, `bdsm`) survive any mosaic without blocking. So gate at the granularity you intend to
@@ -374,11 +374,11 @@ Anima is a newer (qwen-image) pipeline. It is NOT a standard checkpoint: load th
 
 ### 经典 / 知名角色：可能不需要 LoRA
 对于**经典、传播广的角色**（如原神人物、名配角），模型通常**已记住它们**，往往**不用 LoRA**，直接写提示词即可。做法：
-1. **先搜官方设定/提示词**：去网上（wiki / 萌娘百科 / Character Prompt 站点）查该角色的**准确外观描述**（发色发型、瞳色瞳形、服装、饰品、体型）。
-2. 若没有现成提示词：**找几张该角色的人物图**，**看图自己写外观描述词**（逐项：发色/发饰/瞳色/服装配色与纹样/配饰）。
+1. **先搜官方设定/提示词**：**Danbooru 系 tag 库**（词就是模型母语，拼写与"能不能渲染"以它为准）＋ **萌娘百科 / Pixiv 百科 / 百度百科 / 维基百科**（设定事实：服装、道具、别名、罗马字）＋ LoRA sidecar，取该角色的**准确外观描述**（发色发型、瞳色瞳形、服装、饰品、体型）；来源阶梯与"资料→tag 翻译规则"：**`references/character_features.md`**。
+2. 若没有现成提示词：**找几张该角色的人物图**，**先过 `libs/wd14-gate/scripts/wd14_gate.py` 再看**（`BLOCK` 就改用 `dsh_show_gallery` 让人看、或请用户口头描述），**看图自己写外观描述词**（逐项：发色/发饰/瞳色/服装配色与纹样/配饰）。
 3. 用 **`角色英文名 + 外观描述`** 作为人物提示词（Anima 用自然语言、Illustrious 用 tag），如
    `Nahida, short white hair with green accent braid, big green eyes with leaf-shaped pupils, pointed elf ears, white dress with green and gold details, white bloomers, mostly bare legs, white stirrup shoes`。
-- **别瞎猜/硬编码服饰细节**（我在某次就在角色服装上写错过"黑裙黑袜"，应先查设定再写——这直接决定像不像）。
+- **别瞎猜/硬编码服饰细节**：先查设定再写 —— 服装写错直接决定"像不像"。
 - **LoRA 留作保底/强化特定画风**：先试纯提示词，效果不符或要统一画风再上 LoRA。
 
 ## Production pipeline — the macro order (先画什么 → 什么时候编辑 → 什么时候放大)
