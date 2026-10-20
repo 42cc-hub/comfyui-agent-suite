@@ -164,6 +164,104 @@ def grow(seg, edges, seed_k, tau_w, tau_local, tau_global, col, bar_pct=0.995):
     return np.isin(seg, list(region))
 
 
+def compete(seg, edges, col, groups, kmap=None, lam=1.0, bar_pct=0.99,
+            tau_global=None, budget=None, roi=None):
+    """**多类竞争**分配：取代"逐类各自阈值生长"（2026-10-14 加，用户指出的失败模式）。
+
+    为什么要这个模式：`grow()` 拿"当前前沿的平均色"当参考，前沿一旦漂到别的东西上就回不来 ——
+    实测（话筒图）皮肤前沿漂到手指旁边的白高光后，**手指整块橙反而进不来**，而那块纯白被标成了皮肤
+    （一进一出、两个方向同时错）。竞争模式的四条规矩：
+
+      * **锚色**：每类的参考色 = 它自己种子的颜色（多色类天然多锚，取最近的那个）；
+        节点与锚的绝对偏差 > `tau_global[i]` ⇒ 该类不许要它（防漂移，这是关键的一条）；
+      * **竞争**：多源 Dijkstra，**先到先得**（谁先到达节点谁拥有）⇒ 类之间不需要再排优先级；
+      * **屏障计价**：跨边的代价 = 颜色跳变 × (1 + lam × 归一化屏障)，强描边（手指↔话筒）跨不过去；
+      * **ROI / 预算**：矩形 `roi` 之外、或累计代价超过 `budget[i]` 的节点不分配 ⇒ "框外确定没有目标"由输入给出。
+
+    参数：`groups` = {类名: [种子节点id, ...]}；`kmap` = `graph()` 返回的原始label→紧凑id 映射
+    （`col`/`edges` 用的是紧凑 id，`seg` 里是原始 label，不映射会在非连续 label 上错位）。
+    `roi` 可以是**一个矩形**（对所有类生效），也可以是**逐类矩形列表**（`None` = 该类不限）——
+    这正是"用网格先框定"的做法：框外确定没有目标，就不让它参与竞争。
+    返回 (labels, names)：labels 是节点级数组（0=未分配/背景，1..n 对应 names 顺序）。
+    """
+    import heapq
+    if kmap is not None:
+        seg = kmap[seg]
+    names = list(groups)
+    n_nodes = len(col)
+    anchors = [np.array([col[k] for k in groups[n]], np.float32).reshape(-1, 3) for n in names]
+    if tau_global is None:
+        tau_global = [1e9] * len(names)
+    if budget is None:
+        budget = [1e9] * len(names)
+    bvals = np.array([bv for (_d, bv) in edges.values()], np.float32)
+    bar_cut = float(np.percentile(bvals, 100 * bar_pct)) if bvals.size else 1.0
+    adj = {}
+    for (x, y), (_d, bv) in edges.items():
+        adj.setdefault(x, []).append((y, bv))
+        adj.setdefault(y, []).append((x, bv))
+
+    rects = roi if isinstance(roi, list) and roi and isinstance(roi[0], (list, tuple)) else None
+    one = None if rects else roi
+    if one or rects:
+        h, w = seg.shape
+        fy, fx = np.mgrid[0:h, 0:w]
+        flat, fy, fx = seg.ravel(), fy.ravel(), fx.ravel()
+        firstx = np.full(n_nodes, -1, np.int64)
+        firsty = np.full(n_nodes, -1, np.int64)
+        firstx[flat[::-1]] = fx[::-1]                  # 倒序赋值 ⇒ 留下的是每个节点**最先**出现的像素
+        firsty[flat[::-1]] = fy[::-1]
+        inside = []
+        for i in range(len(names)):
+            r = one if rects is None else (rects[i] if i < len(rects) else None)
+            if not r:
+                inside.append(np.ones(n_nodes, bool))
+                continue
+            x0, y0, x1, y1 = r
+            inside.append((firstx >= x0) & (firstx < x1) & (firsty >= y0) & (firsty < y1))
+    else:
+        inside = [np.ones(n_nodes, bool)] * len(names)
+
+    best = np.full(n_nodes, np.inf, np.float32)
+    label = np.zeros(n_nodes, np.int32)
+    heap = []
+    for i, n in enumerate(names, start=1):
+        ok_here = inside[i - 1]
+        for k in groups[n]:
+            if not ok_here[k] or label[k]:
+                continue
+            best[k] = 0.0
+            heapq.heappush(heap, (0.0, int(k), i))
+    while heap:
+        c, u, i = heapq.heappop(heap)
+        if label[u] or c > best[u] + 1e-9:
+            continue
+        label[u] = i                                   # 先到先得：这里就是"竞争"的结果
+        ok_here = inside[i - 1]
+        for v, bv in adj.get(u, ()):
+            if label[v] or not ok_here[v]:
+                continue
+            step = float(np.linalg.norm(col[v] - col[u]))
+            w = step * (1.0 + lam * (bv / (bar_cut + 1e-6)))
+            nc = c + w
+            if nc > budget[i - 1] or nc >= best[v]:
+                continue
+            if float(np.min(np.linalg.norm(anchors[i - 1] - col[v], axis=1))) > tau_global[i - 1]:
+                continue
+            best[v] = nc
+            heapq.heappush(heap, (nc, int(v), i))
+    return label, names
+
+
+def labels_to_masks(segc, label, names):
+    """节点级 `compete()` 结果 → 逐类像素掩版（`segc` = `kmap[seg]`，即节点 id 图）。
+
+    坑（2026-10-14 自己踩到）：这里是 `label[segc] == i`（先用节点 id 图查**该节点属于哪一类**），
+    不是 `segc == i`（那是拿"节点编号"当"类别编号"—— 结果每个类只拿到编号相同的那一个节点）。
+    """
+    return {n: (label[segc] == i) for i, n in enumerate(names, start=1)}
+
+
 def refine_rw(bgr, mask):
     """随机游走让边界贴合真实分界线（把当前 mask 与它外面一圈当种子）。"""
     from skimage.segmentation import random_walker
@@ -184,7 +282,13 @@ def refine_rw(bgr, mask):
         gy = cv2.Sobel(small[:, :, c], cv2.CV_32F, 0, 1, ksize=3)
         g = np.maximum(g, cv2.magnitude(gx, gy))
     beta = 90.0
-    res = random_walker(small, markers, beta=beta, mode='bf')
+    # 坑（2026-10-14 实测，skimage 0.26）：random_walker 的 `channel_axis` 默认已变成 None，
+    # 不显式传 -1 时它按"单通道"校验 `data.shape == labels.shape` ⇒ 三通道 Lab 直接
+    # `ValueError: Incompatible data and labels shapes.`（这个 `--refine rw` 在本机一直是坏的）。
+    try:
+        res = random_walker(small, markers, beta=beta, mode='bf', channel_axis=-1)
+    except TypeError:                       # 老版 skimage 没有这个参数（那时默认就把末维当通道）
+        res = random_walker(small, markers, beta=beta, mode='bf')
     out = (res == 1)
     out = cv2.resize(out.astype(np.uint8), (mask.shape[1], mask.shape[0]),
                      interpolation=cv2.INTER_NEAREST) > 0
@@ -212,6 +316,16 @@ def main():
     ap.add_argument('--gap-close', type=int, default=1)
     ap.add_argument('--fill-holes', action='store_true')
     ap.add_argument('--refine', choices=['none', 'rw'], default='none')
+    ap.add_argument('--mode', choices=['grow', 'compete'], default='grow',
+                    help='grow=老行为（逐种子按阈值生长，多个种子取并集）；'
+                         'compete=**竞争模式**（目标 vs `--neg` 给的确定负样本 + 可选 ROI，先到先得）。'
+                         '目标色和"确定不是目标"的东西都清楚时用 compete，能同时治"漏目标"和"渗到背景"')
+    ap.add_argument('--neg', nargs='*', default=None,
+                    help='compete 模式下的**确定负样本**点 x,y（背景/白布/别的已知类别）：'
+                         '它们会作为"背景类"参与竞争，把不该属于目标的东西先抢走')
+    ap.add_argument('--roi', default=None, help='compete 模式：x0,y0,x1,y1，框外一律不分配')
+    ap.add_argument('--lam', type=float, default=1.0, help='屏障权重（跨强边的代价倍率）')
+    ap.add_argument('--budget', type=float, default=1e9, help='compete 模式：单类累计代价上限')
     a = ap.parse_args()
     bgr, lab = load_lab(a.image)
     h, w = bgr.shape[:2]
@@ -223,7 +337,40 @@ def main():
     def k_of(xy):
         x, y = [int(v) for v in xy.split(',')]
         x, y = min(max(x, 0), w - 1), min(max(y, 0), h - 1)
-        return int(seg[y, x])
+        return int(kmap[seg[y, x]])
+
+    if a.mode == 'compete':
+        groups = {'target': [k_of(s) for s in a.seed]}
+        if a.neg:
+            groups['background'] = [k_of(s) for s in a.neg]
+        roi = [int(v) for v in a.roi.split(',')] if a.roi else None
+        # 坑（2026-10-14 实测）：这里原来写成 `tau_global=tg[:len(names)]`，而 `names` 正是本行的返回值
+        # ⇒ UnboundLocalError（只在单类 CLI 路径触发，多类驱动脚本走的是另一条路，所以之前没暴露）。
+        ncls = len(groups)                    # CLI 只有 target/background 两类，阈值与预算给同一套
+        tg = [a.tau_global] * ncls
+        bg = [a.budget] * ncls
+        label, names = compete(seg, edges, col, groups, kmap=kmap, lam=a.lam, bar_pct=a.bar_pct,
+                               tau_global=tg, budget=bg, roi=roi)
+        segc = kmap[seg]
+        mask = labels_to_masks(segc, label, names)['target']
+        if a.exclude:
+            for bk in [k_of(s) for s in a.exclude]:
+                mask &= (segc != bk)
+        if a.fill_holes:
+            from scipy.ndimage import binary_fill_holes
+            mask = binary_fill_holes(mask)
+        if a.refine == 'rw':
+            mask = refine_rw(bgr, mask)
+        out = (mask.astype(np.uint8) * 255)
+        cv2.imwrite(a.out, out)
+        if a.overlay:
+            ov = bgr.copy()
+            ov[mask] = (0.45 * ov[mask] + 0.55 * np.array([0, 0, 255])).astype(np.uint8)
+            cv2.imwrite(a.overlay, ov)
+        nbg = int((label == 2).sum()) if len(names) > 1 else 0
+        print('  [compete] 目标 %d px（%.2f%%）｜背景节点 %d｜未分配 %d｜→ %s'
+              % (int(mask.sum()), 100.0 * mask.mean(), nbg, int((label == 0).sum()), a.out))
+        return 0
 
     seeds = [k_of(s) for s in a.seed]
     banned = {k_of(s) for s in (a.exclude or [])}

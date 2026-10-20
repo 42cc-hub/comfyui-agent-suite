@@ -65,7 +65,7 @@ DEF_VITPOSE = os.path.join(PROJ, 'models', 'vitpose_ft_v6_labelbox_honly')
 #    换它是为了**覆盖率 + 尾部**：p90 从 224/342 收到 98）
 # 口径：top-down，吃 M2a 的 `person` 框（与 prelabel_vitpose.py / 训练评测同口径）；坐标/名字与 YOLO 分支一致
 # （COCO-17 全名 + `vis∈{0,1,2}`），所以 check_parts.py 的骨架掩版、脚召回兜底、M3 脚裁图都不用改。
-DEF_DET = os.path.join(PROJ, 'runs', 'm2a_det_996img_960', 'weights', 'best.pt')
+DEF_DET = os.path.join(PROJ, 'runs', 'm2a_det_fix_v2', 'weights', 'best.pt')
 # 996 张版（2.46h；**确认训练进程退出后**才敢验收）：person 0.984 / hand 0.914 / foot 0.694 / head 0.978
 # 308 张版是 0.882 / 0.750 / 0.577 / 0.899 ⇒ 数据翻 3 倍的收益
 DEF_M3 = [os.path.join(PROJ, 'runs', 'm3_cls_aug_v1', 'weights', 'best.pt'),
@@ -148,6 +148,9 @@ def main():
     ap.add_argument('--det-weights', default=DEF_DET)
     ap.add_argument('--foot-weights', default=DEF_FOOT,
                     help='专用脚检测器（单类）。与 4 类模型**取并集**：实测它能把 4 类漏掉的 test1 脚找回来')
+    ap.add_argument('--hand-imgsz', type=int, default=None,
+                    help='只给专用**手**检测器换分辨率（默认 None = 跟随 --imgsz，不带参时行为与原来完全一致）。'
+                         '实测手 1280→1536 召回 .405→.481（P .582→.717），代价是单图多一次 1536 推理')
     ap.add_argument('--hand-weights', default=None,
                     help='专用**手**检测器（单类，可选）。与 4 类模型取并集；默认不传 = 关闭'
                          '（`m2a_hand_v1` 未训完，不可用；`m2a_hand_v2` 训完再按交付图实测决定）')
@@ -275,6 +278,7 @@ def main():
 
             # ---- M1 骨架 ----
             vit_pts = []
+            vpid = {}   # 'M1#i' -> i：ViTPose 分支的链就是第 i 个人框裁出来的（:278/:284/:293/:347 保序）
             if vitpose is not None:
                 pboxes = [b['box'] for b in det_boxes if b['cls'] == 'person']
                 if pboxes:
@@ -287,6 +291,7 @@ def main():
                             _vout = _vmodel(**_vin)
                         _vres = _vproc.post_process_pose_estimation(_vout, boxes=[pboxes])
                         for pi, inst in enumerate(_vres[0]):
+                            vpid['M1#%d' % pi] = pi
                             xy = inst['keypoints'].cpu().numpy()
                             sc = inst['scores'].cpu().numpy()
                             for j, cname in enumerate(COCO17_NAMES):
@@ -417,7 +422,8 @@ def main():
             #    因为 `runs/m2a_hand_v1` 只训到 27/150 epoch 就被中断、不可用；等 `m2a_hand_v2` 训完按实测决定。
             if hand_model is not None:
                 try:
-                    rf = hand_model.predict(path, conf=max(0.15, a.conf - 0.15), imgsz=a.imgsz, verbose=False)[0]
+                    rf = hand_model.predict(path, conf=max(0.15, a.conf - 0.15),
+                                            imgsz=a.hand_imgsz or a.imgsz, verbose=False)[0]
                     for b in (rf.boxes or []):
                         nb = [round(v, 1) for v in b.xyxy[0].tolist()]
                         if any(_iou(nb, f['box']) > 0.5 for f in hands):
@@ -623,7 +629,11 @@ def main():
                 b[0], b[1] = min(b[0], p['x']), min(b[1], p['y'])
                 b[2], b[3] = max(b[2], p['x']), max(b[3], p['y'])
             for c, b in chain_box.items():
-                pid = _assign(b)
+                # ViTPose 分支的链本身就是人框裁出来的（:278/:284/:293 → 链号 = 人框号），直接用；
+                # 其余分支（YOLO-pose 回退 :325、imgutils :339）没有这条对应，仍按几何归属。
+                pid = vpid.get(c)
+                if pid is None or pid >= len(persons):
+                    pid = _assign(b)
                 for p in rec['points']:
                     if p.get('chain') == c:
                         p['person_id'] = pid

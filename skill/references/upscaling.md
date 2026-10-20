@@ -1,8 +1,7 @@
 # Upscaling — models, sources, measured comparison
 
-Why this file exists: "the upscaling is bad" is almost always "the right model isn't installed" —
-the stock install ships only two upscale models and produces visibly soft results. Everything
-below is measured.
+**"The upscaling is bad" 通常是"对的模型没装"** —— 原装只有两个 upscale 模型，出图明显发软。
+下面的数字都是实测。
 
 ## The node chain
 
@@ -88,30 +87,18 @@ They are different architectures, and `UpscaleModelLoader` only accepts the ESRG
 - **Real-CUGAN** → needs its own runtime (`realcugan-ncnn-vulkan`, above) or a dedicated ComfyUI
   node. Exporting the weights as `.pth` does **not** make them loadable.
 
-## The browser tool at `tool.hoothin.com/zh-CN/image-upscaler`
+## 浏览器 upscaler（`tool.hoothin.com/zh-CN/image-upscaler`）—— 不要移植
 
-Investigated because its "Anime+ (4x)" looked better than the local result.
-
-- It runs **entirely in the browser**: a TensorFlow.js graph model with a WebGL/WebGPU backend.
-  The image is never uploaded; only the weights are fetched once from `/models/...`.
-- The models are the **Real-CUGAN / Real-ESRGAN family** — the same families installable
-  natively, where they run faster and can be scripted.
-- Its own artifact is a **TF.js graph model** (`convertedBy: TensorFlow.js Converter v4.21.0`,
-  float16 weights, 64×64 input tiles → 256×256 output). That is a browser-only format;
-  converting it back to something ComfyUI can load is work with no payoff.
-- **Conclusion: don't port it — install the native model.** The "Anime+" slot maps to the
-  Real-ESRGAN anime model; the "RealCUGAN 降噪版 (4x)" slot maps to `up4x-conservative` in the
-  ncnn-vulkan build.
-
-Caveat: the site's models are downloaded to the browser cache, so after the first
-load it works offline-ish, but a page load still needs the network for HTML/JS. It is a fine tool;
-it is simply not automatable, which is the only thing ncnn buys you.
+它跑在浏览器里（TF.js 图模型 + WebGL/WebGPU 后端，图片不上传），模型就是 Real-CUGAN / Real-ESRGAN
+同族，但产物是浏览器专用 TF.js 格式（float16，64×64 tile → 256×256），转回 ComfyUI 可加载格式没有收益。
+**结论：装原生模型**——"Anime+" 槽 = Real-ESRGAN anime；"RealCUGAN 降噪版 (4x)" = ncnn-vulkan 版的
+`up4x-conservative`。它不可自动化，而可自动化正是 ncnn 的唯一价值。
 
 ## Delivery
 
 - **放大在流程里会发生不止一次，而且每次对应"下一层要处理的细节"的尺度** —— 手指、脚趾、瞳孔这类小物件
   **没有足够像素就画不好**，所以是"小尺寸抽结构 → 中间尺寸补细节 → 交付尺寸收尾"，不是一次放大到底。
-  见 `references/production_pipeline.md`（第 3 步与第 6 步）。
+  见 `（未随仓库发布的内部文档）`（第 3 步与第 6 步）。
 - 4× from a 1216-wide source = 4864×3328 (16 MP). Ship **2×**: keep the 4× result and downscale
   by half with LANCZOS. That beats feeding the source to a native 2× model.
 - 2432×1664 lands around 3–4 MB as PNG — comfortable for a gallery upload.
@@ -159,68 +146,11 @@ LoadImage(放大后的图) → Canny(low 0.2, high 0.5) → AnimaLLLiteApply_sds
 
 ---
 
-## Upscaling (2x / 4x) — after generation, before delivery
 
+## Sharpness at delivery size
 
-
-Chain: **`UpscaleModelLoader` → `ImageUpscaleWithModel` → `SaveImage`**. No diffusion pass,
-so it is fast and deterministic — 1216×832 → 4864×3328 takes seconds, not minutes.
-Reference graph: `references/upscaling_workflow.json`. Model sources, the verified download
-URLs and the full comparison: **`references/upscaling.md`**.
-
-**Measured** — same source, same 200×200 face crop, all four shown at 4×:
-
-| model | verdict |
-|---|---|
-| `4x-AnimeSharp.pth` | **best** — cleanest line art, hair strands separate, no sharpening halos. **Use as default.** |
-| `RealESRGAN_x4plus_anime_6B.pth` | good, marginally harder / more aggressive sharpening |
-| `4xhfa2kludvaeswinir_v1.safetensors` | general purpose, not anime-tuned |
-| `2x_AnimeJaNai_HD_V3_SuperUltraCompact.pth` | **REMOVED** (moved to `agent_work/_disabled_upscalers/`) — it was **noticeably softer than either 4x model**, and using it was the actual cause of "upscale looks blurry" reports. Use `4x-AnimeSharp` then Lanczos-halve instead. |
-
-Rules:
-
-- **Install the model; don't blame the node.** A weak upscale almost always means a weak or
-  missing `.pth`, not that ComfyUI's upscaling is bad. The default install shipped with only
-  a 2x anime model and a general-purpose SwinIR, which is why it looked poor.
-- **Deliver at 2×.** 4× from a 1216-wide source is 4864 px / 16 MP. Keep the 4× result and
-  downscale it by 2 with LANCZOS — a 4×-then-downscale beats a native 2× model.
-- **Upscaling is not a substitute for framing.** If the subject is too small in frame, crop to
-  it first and upscale that, rather than enlarging the whole canvas.
-- **Only ESRGAN-architecture `.pth` loads in `UpscaleModelLoader`.** Real-CUGAN is a different
-  architecture and needs its own runtime (ncnn) — see `references/upscaling.md`.
-- **Fixing a few pixels inside a big image** is a different job from upscaling: cut the region
-  out with `SmartImageCrop`, repaint it, paste it back with `SmartImageStitcher`, and limit the
-  repaint with `SetLatentNoiseMask` on a **shaped** mask. Cost tracks the crop, not the canvas
-  (a 3328×4864 page took **44 s** against 80 s for its 832-wide source). Full playbook:
-  **`references/local_repaint_bigcanvas.md`**. Note the measured negative result there: the
-  "4x → shrink → 4x" chain does not work out, because the model's factor is fixed at 4x.
-  The same reference also has the **no-custom-node route** (PIL crop → sample → paste by mask,
-  with the `LoadImage MASK = 1 − alpha` trap that turns a repaint into a silent no-op), the
-  `min-sample` rule for tiny targets, and when to **split one diagonal region into two passes**.
-  **The stitcher itself is bit-exact; the crop's *rescaling* is what moves pixels.** With the crop **not
-  rescaled**, a pure passthrough (`crop_image → SmartImageStitcher`, **no sampler at all**) reproduces the
-  original **bit-for-bit** — out-of-mask `>2/255` = **0.0000 %**, `max Δ 0` — with `Box Feather 32` and with or
-  without the stitcher's `mask` input; the **full sampled** graph is bit-exact too once the crop is not rescaled
-  and the mask is wired (out-of-mask **0.0000 %**, `max Δ 0`, in-mask 62–73 % changed). An out-of-mask **4.31 %**
-  / `max Δ 83` reading is a *rescaled* crop, not a stitcher limit. The drift comes from **`SmartImageCrop`
-  resizing the crop** — `force_divisibility=128` / `min_resolution=768` force a resize even with no sampling
-  (measured 0.0542 % out-of-mask, `max Δ 46` just from crop→paste), and if the stitcher's `mask` is *not* wired
-  the whole crop box carries that difference (0.3352 %, `max Δ 229`). So: **set `force_divisibility=8` (and a
-  `min_resolution` the mask bbox already clears) so no resize happens, and wire `crop_mask` into the stitcher's
-  `mask`** — then either route is exactly 0 outside. Report `max Δ outside mask` plus the `>2/255` percentage.
-  Measurement script + raw numbers: `task/lumine_hospital_20261004/verify_stitcher.py` (cases P1–P7).
-
-### Shrinking to the delivery size, and proving sharpness
-
-- **Downscaling is part of the recipe, not an afterthought**: `ImageUpscaleWithModel` → `ImageScale`
-  (`lanczos`) to the target long side. Delivering the 4× output directly is 16 MP of no extra
-  information.
-- **A plain resize is not a substitute for the upscale model.** Same source, same target size
-  (3000 px long side): plain LANCZOS gives `|Laplacian|` mean **3.04** / P99 44; 4×-AnimeSharp then
-  Lanczos gives **5.17 / 94**, against the 2000 px original's 5.53 / 89 — i.e. the model preserves
-  the source's edge energy while a bare resize loses ~40 % of it.
-- **Score sharpness at the same pixel size, on the luminance channel**, using the 3×3 Laplacian's
-  mean absolute value and P99 (script in the pixiv project: `outfit_prompt_lab/sharpness.py`). A
-  57 % gap is real; 5 % is noise. This is also how to settle "which upscaler" and "did my
-  re-sharpen pass help" without arguing from impressions.
-
+Judge sharpness at the size you ship, not at the 4x size: mean |Laplacian| of the luma
+channel (3x3 kernel), image at 2000 px long edge — plain LANCZOS straight from the 4x
+render **3.04** (P99 44); 4x-AnimeSharp then LANCZOS down **5.17** (P99 94); a 2000 px
+original as the ceiling **5.53** (P99 89). Compare only at identical pixel dimensions;
+a ~57 % gap is real, ~5 % is noise.

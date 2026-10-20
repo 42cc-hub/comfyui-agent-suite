@@ -1,70 +1,37 @@
+# Troubleshooting —— 看到什么 → 查哪里 → 怎么办
 
+红线相关的两条不在本文件，在 SKILL.md 的 Safety gate 与 Cleaning up。
 
+## ComfyUI / 提交
 
----
+- **`To see the GUI go to ...` 一直不出现** — 看 job 输出尾部；多半是沙箱写拒绝或 db 锁（见 SKILL.md 的 Start/stop）。
+- **提交时 `node_errors` 非空** — 图里引用了未知节点或坏枚举；重新 `GET /object_info` 拿准确字段值。
+- **第一次跑特别慢** — 模型要进 6 GB VRAM（async offload）；SDXL/Anima 1024² 含加载约 20–90 s。
+- **CLI flag 看起来没生效** — 去读**实际提交的图**（`wf/*.json`）。`--lora-strength` 没接到 `LoraLoader.strength_model`（脚本里硬编码 0.8）时，输出与"denoise 太低"不可区分；要改的是脚本，不是参数。
+- **下载源被判"坏了"** — 先跑连通性矩阵：本机国际线路会整体掉（`[measured]`：hf-mirror / huggingface.co / github.com / ghproxy / jsdelivr / pypi.org 全 `URLError`——DNS 通、TCP 失败；baidu / bing / modelscope.cn / mirrors.aliyun.com / pypi.tuna 正常）。断点续传用 `Range`；`IncompleteRead` = 截断，只有读到 EOF 才算完整，**不许拿猜的字节数当完整性判据**。
+- **HTTPS 下载一律 `schannel: AcquireCredentialsHandle failed`** — 本机 shell 没有直连 internet，Windows TLS 在沙箱里拿不到凭据。别硬试：走本地代理 `127.0.0.1:6132` + **Python**（scripts/fetch_url.py，OpenSSL）。`curl` 和 `Invoke-WebRequest` 改 `SecurityProtocol` 也没用。
 
-## Troubleshooting
+## 提示词 / LoRA
 
+- **串味、画错角色** — 按顺序查：(1) LoRA 的底模家族与管线是否匹配；(2) **触发词表是否完整**（sidecar 的 `civitai.trainedWords` *和* `civitai.images[].meta.prompt`，加 `ss_tag_frequency`），以及自己的 tag 有没有与 LoRA 自带词冲突；(3) 删掉冲突 tag。**不要先动 `strength_model`/`strength_clip`**：插值只是经验上平滑、不是保证的混合，调低会悄悄削弱你正想修的那个身份——除非 LoRA 明显损坏画面，否则都保持 **1.0**（要降也是最后一步，先换 LoRA）。
 
-- **`To see the GUI go to ...` never appears** — check the job output tail; likely the sandbox write denial or a db lock (see Start/stop section).
-- **`node_errors` non-empty on submit** — the graph references an unknown node or bad enum; re-query `/object_info` for the exact field values.
-- **Very slow first run** — the model loads into 6 GB VRAM (async offload); SDXL/Anima at 1024² typically takes ~20–90 s including model load.
-- **Garbled / wrong-character result** — check in this order: (1) the LoRA's base-model family matches the pipeline; (2) **the trigger list is complete** (sidecar `civitai.trainedWords` *and* `civitai.images[].meta.prompt`, plus `ss_tag_frequency`) and none of your own tags contradict the LoRA's own words; (3) drop conflicting prompt tags. Do **not** reach for `strength_model`/`strength_clip` first: interpolating a LoRA's strengths is only empirically smooth, not a guaranteed blend, and lowering them silently weakens the very identity you are trying to fix — keep both at **1.0** unless the LoRA visibly damages the image (then prefer another LoRA, and lower strength last).
-- **Blender exits 1 at startup** — missing `--factory-startup` (it tries to write the user extension cache under `%APPDATA%\Blender`).
-- **Blender exits 1 AFTER saving every file** — same extension cache, denied by the sandbox. Check the files exist rather than trusting the exit code, or set `BLENDER_USER_EXTENSIONS` to a workspace path for a clean exit.
-- **Skeleton offset from the clay render** — keypoints projected in armature space; multiply by `arm_obj.matrix_world` first.
-- **Depth map is a flat gray slab** — near/far anchored to the whole scene instead of the subject.
-- **img2img output is monochrome** — a gray clay init at low denoise; raise denoise to ~0.8.
-- **Stacked ControlNets re-frame the subject** — keep the depth weight ≥ 0.7.
-- **Any HTTPS download fails with `schannel: AcquireCredentialsHandle failed`** — this host's
-  shell has no direct internet and Windows TLS cannot obtain credentials inside the sandbox.
-  Do not fight it: use the local proxy `127.0.0.1:6132` with **Python**
-  (`scripts/fetch_url.py`), which goes through OpenSSL. `curl` and
-  `Invoke-WebRequest` will keep failing no matter what you set `SecurityProtocol` to.
-- **Upscale output looks soft** — check which `.pth` is actually loaded. `2x_AnimeJaNai` was
-  much softer than `4x-AnimeSharp` (it is **gone** — see Machine facts), and a
-  4× result downscaled to 2× beats a native 2× model. If a render still looks soft, the softness
-  usually comes from an earlier step (an upscale-then-repaint chain bakes the soft input in),
-  not from the last resize.
-- **A local repaint changed nothing** — the most common cause is the **inverted mask**:
-  `LoadImage`'s MASK is `1 − alpha`, so a mask written into alpha as-is repaints the complement
-  (a silent no-op). Write `putalpha(255 - mask)` and prove it with `diff_report.py`: in-mask
-  change ≈ 30 %, **out-mask 0.0000 %**. A mask that is empty or reversed shows as in-mask ≈ 0.
-- **A CLI flag appears to do nothing** — read the graph that was actually submitted
-  (`wf/*.json`). A `--lora-strength` that never reached `LoraLoader.strength_model` (hard-coded
-  0.8) is indistinguishable from "denoise is too low" in the output; the fix is in the script,
-  not in the numbers.
-- **A cloud-edited region does not sit in the picture** (visible rectangle, halo, or a rope that
-  no longer lines up) — the tool ignored the mask and/or re-lit the background. Never replace the
-  image with its answer: paste **by mask**, use the subject-only merge with a dark guard, match
-  the background's median colour offset first, and keep thin structures' original pixels
-  (`references/cloud_edit_and_merge.md`).
-- **A preprocessor returns `people: []` / an empty result for an image you already uploaded** —
-  `LoadImage` + preprocessor results are cached **by filename**. `upload(..., overwrite=true)`
-  rewrites the bytes but the node still serves the **old** cached result, so re-using one input
-  filename pins whatever the first run produced — including a first-run *failure*, permanently.
-  Measured on `OpenposePreprocessor`: same fixed name → `face_keypoints_2d` 0 / `people: []`
-  on every repeat; same bytes under a fresh name → **face 70/70, identical bbox**, 3/3 runs.
-  Do **not** "fix" this with a content hash — identical content means an identical name, which makes
-  a cached empty result deterministic. Upload each detection input under a **unique** name
-  (`role_stem_timestamp_rand.png`). A dose sweep then reports "no face found" on every variant after
-  the first — indistinguishable from a flaky detector.
-- **A script reports "detection failed" but the detector is fine** — on Windows the console defaults
-  to GBK, so `print("✗ …")` raises `UnicodeEncodeError` and **kills the process**; the caller sees a
-  non-zero exit and no success line. Measured: 3/3 "no face found" without the guard, 3/3 success
-  with it, same image. Put `sys.stdout.reconfigure(encoding="utf-8", errors="replace")` at the top of
-  every script that prints symbols, and invoke child scripts with `python -X utf8`.
-- **Deciding a download source is broken** — this host's international routes can drop
-  completely (measured): hf-mirror / huggingface.co / github.com / ghproxy /
-  jsdelivr / pypi.org all `URLError` (DNS resolves, TCP fails) while baidu / bing /
-  modelscope.cn / mirrors.aliyun.com / pypi.tuna are fine. Run that reachability matrix **before**
-  blaming the source, and prefer Python `urllib` for it. Partial file downloads are resumed with
-  `Range`; a run that raises `IncompleteRead` is truncated, and only a clean read-to-EOF counts as
-  complete — never decide completeness by comparing to a **guessed** size.
-- **`insightface` raises `InvalidProtobuf` / `Protobuf parsing failed` on a model you never
-  asked for** — `FaceAnalysis` loads **every** `.onnx` in the pack directory; `allowed_modules`
-  does not stop the load. Put only the pieces you need in a separate pack dir (a minimal
-  `buffalo_l_min/` with `det_10g` + `w600k_r50` is enough for **detection + recognition**, i.e.
-  ArcFace identity similarity, without waiting for the big `1k3d68`). Also check the EP list:
-  this host's `onnxruntime 1.29.0` has **no CUDA provider**, so FaceID runs on CPU.
+## 掩版 / 重绘
 
+- **局部重绘什么都没变** — 最常见是**反了掩版**：`LoadImage` 的 MASK = `1 − alpha`，把 mask 原样写进 alpha 就是重绘补集（静默 no-op）。写 `putalpha(255 - mask)`，并用 `diff_report.py` 证明：in-mask 变化 ≈ 30 %、**out-mask 0.0000 %**。掩版为空或反了表现为 in-mask ≈ 0。
+- **预处理器返回 `people: []` / 已上传的图却检测不到** — `LoadImage` + 预处理器的结果**按文件名缓存**。`upload(..., overwrite=true)` 只改字节，节点仍返回**旧**缓存结果，所以复用同一个输入文件名会把第一次的结果（包括第一次的**失败**）永久钉住。`[measured]` `OpenposePreprocessor`：固定文件名 → 每次都 `people: []` / `face_keypoints_2d` 0；同样字节换新名 → **face 70/70、bbox 一致**，3/3 次。**不要**用内容哈希"修"它——内容相同则名字相同，等于把空结果变成确定行为。每个检测输入都用**唯一**名字（`role_stem_timestamp_rand.png`）；否则一次 dose sweep 从第二个变体起全部报"没找到脸"，与检测器不稳无法区分。
+
+## Blender
+
+- **启动即 exit 1** — 缺 `--factory-startup`（它会去写 `%APPDATA%\Blender` 下的扩展缓存）。
+- **写完所有文件后才 exit 1** — 同一个扩展缓存被沙箱拒绝。**看文件是否存在**，别信退出码；或把 `BLENDER_USER_EXTENSIONS` 指到工作区路径换取干净退出。
+- **骨架与 clay 渲染错位** — 关键点是在 armature 空间投影的；先乘 `arm_obj.matrix_world`。
+- **depth 图是一片灰** — near/far 绑到了整个场景而不是主体。
+- **img2img 出来是单色** — 灰 clay init + 低 denoise；提到 ~0.8。
+- **叠 ControlNet 后主体被重新取景** — depth 权重保持 ≥ 0.7。
+
+## 放大 / 抠图 / 云端编辑
+
+- **放大结果发软** — 先确认真正加载的是哪个 `.pth`。`2x_AnimeJaNai` 明显比 `4x-AnimeSharp` 软（**已移除**，见 SKILL.md 的 Machine facts），且 4× 降到 2× 胜过原生 2× 模型。仍软则多半软在更早的一步（"先放大再重绘"的链会把软输入烘进去），不是最后一次 resize。
+- **云端编辑的区域贴不进画面**（可见矩形、光晕、绳子对不上）— 工具忽略了掩版和/或重打了背景光。**永远不要用答案替换原图**：按掩版贴回、用带暗边的 subject-only merge、先对齐背景中位色偏、细结构保留原像素（`references/cloud_edit_and_merge.md`）。
+- **脚本报"检测失败"但检测器是好的** — Windows 控制台默认 GBK，`print("✗ …")` 抛 `UnicodeEncodeError` 直接**杀掉进程**，调用方只看到非零退出。`[measured]` 无 guard 3/3 报"没找到脸"、加 guard 3/3 成功（同一张图）。每个打印符号的脚本顶部放 `sys.stdout.reconfigure(encoding="utf-8", errors="replace")`，子脚本用 `python -X utf8` 调。
+- **`insightface` 报 `InvalidProtobuf` / `Protobuf parsing failed`（那个模型你根本没要求）** — `FaceAnalysis` 会加载 pack 目录里**每一个** `.onnx`，`allowed_modules` 拦不住加载。只把需要的放独立目录（最小集 `buffalo_l_min/` = `det_10g` + `w600k_r50` 就够检测+识别，即 ArcFace 身份相似度，不必等大的 `1k3d68`）。再看 EP 列表：本机 `onnxruntime 1.29.0` **没有 CUDA provider**，FaceID 走 CPU。

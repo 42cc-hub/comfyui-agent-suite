@@ -66,7 +66,7 @@ pip install -r libs/anime-detection/requirements.txt
 
 ```bash
 python skill/scripts/fetch_weights.py --list                    # 先看清单与大小
-python skill/scripts/fetch_weights.py --from-release 42cc-hub/comfyui-agent-suite@weights-v2
+python skill/scripts/fetch_weights.py --from-release 42cc-hub/comfyui-agent-suite@weights-v1,weights-v2,weights-v3
 python skill/scripts/fetch_weights.py --from-dir D:/my_runs     # 自己训练完的人：按权重名找 best.pt
 ```
 

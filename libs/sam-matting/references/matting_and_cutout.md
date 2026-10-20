@@ -24,13 +24,9 @@
 模型：`models/sams/sam_vit_b_01ec64.pth`（Meta SAM ViT-B，357 MB，已放在本 skill 目录内）。
 依赖：`pip install segment-anything`（几十 KB 的纯 Python 包；权重不需要联网下载）。
 
-为什么是 SAM：它按**物体性**分割，不在乎"白头发和白背景同色"。同一条任务上试过的两条
-颜色/边缘路线都失败了，原因记下来避免重走：
-
-- **GrabCut**：颜色模型把白色头发判成背景（白底白物），并会把细发丝整段删掉；
-- **线稿堤坝（从画布边缘灌水、遇线稿停）**：思路对（半透明火焰没有线稿会被自动排掉），但这张
-  海报背景里有大面积深色（PHOENIX 大字、黑胶唱片、噪点），堤坝占 52% 的像素、灌水被切碎。
-  若改用**人涂的背景层**当水源则可行，但复杂海报上仍不如 SAM 直接。
+为什么是 SAM：它按**物体性**分割，不在乎"白头发和白背景同色"。两条颜色/边缘路线在这条任务上失败：
+**GrabCut** 把白头发判成背景（白底白物），并整段删掉细发丝；**线稿堤坝**（从画布边缘灌水、遇线稿停）
+在背景有大面积深色时堤坝占 52% 像素、灌水被切碎（改用人涂背景层当水源可行，复杂海报上仍不如 SAM）。
 
 ```bash
 # A. 生成图批处理（平坦背景）
@@ -79,7 +75,7 @@ python scripts/tools/mask_from_colors.py matte_block.png --out-dir out/matte \
   --rgba-base IN.png --colors "white=#FFFFFF" --tol 60
 ```
 
-**实测对比**（2026-10-12，同一张双人膝枕图，1024×1536；"内部空洞"= 不接触画面边界的背景连通块，
+**实测对比**（同一张双人膝枕图，1024×1536；"内部空洞"= 不接触画面边界的背景连通块，
 也就是常说的**发缝/漏块**）：
 
 | 掩版来源 | 覆盖 | 内部空洞 | 最大空洞 |
@@ -88,12 +84,12 @@ python scripts/tools/mask_from_colors.py matte_block.png --out-dir out/matte \
 | 本地 SAM 两层并集 | 28.9% | **96 个 / 合计 29.2k px** | **9.2k px** |
 | 检测掩版并集（合成轮廓，非 matte） | 37.0% | 0 | — |
 
-⇒ **SAM 的空洞面积是 Wan 的 8.4 倍**（还有一块 9.2k px 的大洞），这正是用户说的"**SAM 会漏发缝**"；
+⇒ **SAM 的空洞面积是 Wan 的 8.4 倍**（还有一块 9.2k px 的大洞），即"**SAM 会漏发缝**"；
 Wan 的覆盖更高、空洞小一个数量级。**代价**：按次计费、输出常被放大（要**最近邻**缩回原尺寸）、
 边界是生成的 ⇒ 抠完**务必叠一张预览核对**（`mask_from_colors.py --preview`），
 关键交付物仍建议与 SAM 结果**求交/求并**后人工过一眼。
 
-**价格**（官方价，2026-10-12）：默认（服务端改写提示词）**$0.027504/张 ≈ ¥0.20**；
+**价格**（官方价）：默认（服务端改写提示词）**$0.027504/张 ≈ ¥0.20**；
 加 `prompt_extend=false`（**本工具现在的默认**）**$0.01434/张 ≈ ¥0.10**。
 关改写对抠图是**又便宜又听话**（"涂纯白/纯黑"这种指令不该被改写）：同图实测空洞
 3,469 → 5,373 px，两模式 IoU **0.95**（同一质量档）。要旧行为加 `--prompt-extend`。
@@ -150,40 +146,3 @@ python scripts/contact_sheet.py sheet.png 260x380 *.png      # 批量目视
 1. 图是自己生成的、且提示词写了纯色背景 → `matte_flat_bg.py`，直接用。
 2. 图是别人的/海报 → 先请人涂两层轮廓 → `matte_from_scribbles.py`；需要去道具/特效/补遮挡 → 走百炼，然后 `chroma_key.py`。
 3. 任何"看起来很干净"的结果，都用 `score_matte.py` + `compare_matte.py` 对着 GT 验一遍再下结论。
-
-
----
-
-## Cutting the background out (matting / alpha)（自入口 SKILL.md 搬入 2026-10-13）
-
-> 来源：`SKILL.md` 的同名章节，2026-10-13 入口瘦身时**整段**搬来，正文未改（只调了标题层级与交叉引用）。
-
-
-Full playbook with measured numbers: **`references/matting_and_cutout.md`**. Pick by input type —
-the difficulty differs by an order of magnitude:
-
-| Input | Route | Measured |
-|---|---|---|
-| Our own render, prompt said `plain white background` | `matte_flat_bg.py "out/**/*.png" --out DIR` | SAM score 0.961 mean over 19 images, 1–3 islands each, no decisions |
-| Someone else's illustration / poster | `matte_from_scribbles.py IMG --fg FG.png --bg BG.png [--subtract mask.npy]` | IoU 0.737 against a hand-cut GT (0.779 when the best SAM proposal is hand-picked via `--pick`) |
-| Flat chroma background | `chroma_key.py IN.png OUT.png` | background-coloured pixels left inside: 0.000% |
-| Need props/effects **removed** or occluded areas **rebuilt** | `bailian_image_edit.py edit IN.png OUT.png "<instruction>"` then `chroma_key.py` | one 21 s call, but it re-renders: two prompt variants agreed at only alpha IoU 0.586 |
-
-Key facts that decide the approach (each cost a failed attempt):
-
-- **SAM, not colour.** `models/sams/sam_vit_b_01ec64.pth` ships with this skill; install with
-  `pip install segment-anything`. GrabCut fails on white hair over a white background, and a
-  lineart-dam flood fails on posters whose background is dark and textured.
-- **The proposal choice matters more than the prompt.** With a box over the whole subject, SAM's
-  highest-scoring mask is often everything in the box. `sam_object_mask.segment` ranks proposals
-  by IoU against the rough foreground / the human's scribble, and `matte_from_scribbles.py` prints
-  every proposal so `--pick` can override.
-- **Do not invent island rules.** On a poster, "keep only the largest island", "islands right of
-  x=500 are flames" and "pale islands are flames" respectively deleted the long hair sweep + lower
-  leg, the red wing ornament, and the entire character. Use the human's scribble per island: it
-  agreed with the hand-cut ground truth on **7/7** islands.
-- **Hosted edit models return no alpha** and re-render rather than segment, so a cutout from them is
-  "draw on chroma → key locally", and the pixels are the model's, not the original's.
-- **Verify, don't trust.** `score_matte.py GT.png mine.npy` (IoU / FP / FN / edge + error clusters)
-  plus `compare_matte.py` (red = missed, blue = added) before claiming a matte is good.
-

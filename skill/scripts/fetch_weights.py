@@ -3,7 +3,9 @@
 权重清单在 `weights/manifest.json`（名字、任务、配置、指标、大小、sha256）。
 三种来源，按顺序尝试：
   1. `--from-dir <目录>`：从本地目录里按 `<name>.best.pt` 找（自己训练完的人用这个）；
-  2. `--from-release <owner/repo@tag>`：从 GitHub Release 附件下（默认读环境变量 `SUITE_RELEASE`）；
+  2. `--from-release <owner/repo@tag[,tag2,...]>`：从 GitHub Release 附件下，tag 可给多个（逗号分隔）
+     并按顺序尝试 —— 因为 Release 是**增量式**的（v1 11 个、v2 4 个、v3 2 个），只写一个 tag 会让
+     其余权重的 URL 404；全失败才报缺失（默认读环境变量 `SUITE_RELEASE`）；
   3. 都不可用时打印清单并退出，让人自己下（脚本不静默失败）。
 
 两种条目形态：
@@ -15,7 +17,7 @@
 用法：
     python fetch_weights.py --list
     python fetch_weights.py --from-dir D:/my_runs
-    python fetch_weights.py --from-release 42cc-hub/comfyui-agent-suite@weights-v2
+    python fetch_weights.py --from-release 42cc-hub/comfyui-agent-suite@weights-v1,weights-v2,weights-v3
 """
 import argparse
 import hashlib
@@ -118,14 +120,17 @@ def main():
                         break
             if not got and a.from_release:
                 import urllib.request
-                url = 'https://github.com/%s/releases/download/%s/%s' % (
-                    a.from_release.split('@')[0], a.from_release.split('@')[-1], asset)
-                print('下载 %s' % url)
-                try:
-                    urllib.request.urlretrieve(url, dst)
-                    got = True
-                except Exception as e:                              # noqa: BLE001
-                    print('  失败：%s' % e)
+                repo, _at, tag_part = a.from_release.partition('@')
+                tags = [t.strip() for t in tag_part.split(',') if t.strip()]
+                for tag in tags:                    # 增量式 Release：按顺序试，第一个拿到的为准
+                    url = 'https://github.com/%s/releases/download/%s/%s' % (repo, tag, asset)
+                    print('下载 %s' % url)
+                    try:
+                        urllib.request.urlretrieve(url, dst)
+                        got = True
+                        break
+                    except Exception as e:                              # noqa: BLE001
+                        print('  失败：%s' % e)
             if not got:
                 got_all = False
                 print('✗ 没拿到 %s（用 --from-dir 指向你的 runs 目录，或 --from-release owner/repo@tag）' % asset)

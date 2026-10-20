@@ -57,9 +57,3 @@ python main.py --port 7187 --listen 127.0.0.1
 2. `GET /object_info/LoraLoader` → 200（证明 LoRA 路径配置生效）；
 3. 跑一张 **1 图工作流**（`PreviewImage` 结尾，别用 `SaveImage`，见 SKILL.md 的 Cleanup 硬规则），
    再用 `GET /view?filename=..&type=temp` 取回，确认图能落、能取、能看（**先过 WD14 gate 再看**）。
-
-## 8. 与外部安装脚本的对照（可选）
-
-外部 `install-sd.ps1` 的"环境预检"结构值得借鉴：**磁盘空间 → 镜像探活 → git → Python 版本 → VC++ 运行库**，
-缺啥补啥、每项失败只报一条错。但 **ComfyUI 的条件与本机实况不同**（见 §2 的 torch 分支、§5 的沙箱权限），
-**按上面实测写，不要照搬**。

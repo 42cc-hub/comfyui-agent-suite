@@ -374,6 +374,9 @@ def _sam_predictor(ckpt):
     return _SAM
 
 
+LAST_PID_PATH = []   # 诊断：最近一次 _instances() 每条链走的路径（'exact' / 'greedy'），不参与输出
+
+
 def _instances(rec, a):
     """把"一个角色"定义清楚 —— **以 M1 骨架链为准**（一条链 = 一个角色），
     再补上"没有任何链、但置信度够高且不与别的框嵌套"的 person 框。
@@ -386,23 +389,60 @@ def _instances(rec, a):
     boxes = rec.get('boxes_all') or rec.get('boxes', [])
     persons = [b for b in boxes if b.get('cls') == 'person']
     chains = collections.defaultdict(list)
+    cpid = collections.defaultdict(set)
     for p in rec.get('points', []):
         if p.get('vis', 0) >= 1 and p.get('chain'):
             chains[p['chain']].append((int(p['x']), int(p['y'])))
+            v = p.get('person_id')
+            if isinstance(v, int):
+                cpid[p['chain']].add(v)
     inst, dropped = [], []
     used = set()
+    LAST_PID_PATH[:] = []
     have_chain = any(len(k) >= 3 for k in chains.values())
-    for ci, (ch, kps) in enumerate(sorted(chains.items())):
+    # ① 精确路径：locate 的 ViTPose 分支按"链 i ← 第 i 个人框"裁图，点上 `person_id` 写的就是它
+    #    （套件 locate.py:290/629）。链上 vis>=1 的点口径一致、合法、且没被别的链占住 → 直接用。
+    pid2idx = {}
+    for i, b in enumerate(persons):
+        v = b.get('person_id', i)
+        if isinstance(v, int) and v not in pid2idx:
+            pid2idx[v] = i
+    pick, path = {}, {}
+    for ch in sorted(chains):
+        if len(chains[ch]) < 3 or len(cpid.get(ch, ())) != 1:
+            continue
+        idx = pid2idx.get(next(iter(cpid[ch])))
+        if idx is not None and idx not in used:
+            pick[ch], path[ch] = idx, 'exact'
+            used.add(idx)
+    # ② 兜底（老 JSON / person_id=-1 / 与别的链撞同一个 pid）：一对一几何贪心。
+    #    多人身体重叠时 person 框会互相罩住对方的质心：逐链各自"取含心框里 prob 最高的"会把
+    #    两条链判给同一个框（2026-10-20 双人重叠 20 张实测：17/44 条链错配、15/20 张图有碰撞，
+    #    下游做出"两个人一根骨架"）。改成**一对一**：候选越少的链先抢，一个框只归属一条链
+    #    （同 docs/runs.md:942 头框"最大且在框内"撞车的修法）。
+    hits = collections.OrderedDict()
+    for ch, kps in sorted(chains.items()):
         if len(kps) < 3:
             continue
         cx = sum(x for x, _ in kps) / len(kps)
         cy = sum(y for _, y in kps) / len(kps)
-        best, bi = -1, None
-        for i, b in enumerate(persons):
-            x0, y0, x1, y1 = b['box']
-            if x0 <= cx <= x1 and y0 <= cy <= y1:
-                if bi is None or b.get('prob', 0) > persons[bi].get('prob', 0):
-                    bi = i
+        hits[ch] = [i for i, b in enumerate(persons)
+                    if b['box'][0] <= cx <= b['box'][2] and b['box'][1] <= cy <= b['box'][3]]
+    for ch in sorted(hits, key=lambda c: (len(hits[c]),
+                                         -max([persons[i].get('prob', 0) for i in hits[c]] or [0]))):
+        if ch in pick:                 # ① 已经精确命中，不再参与抢
+            continue
+        for i in sorted(hits[ch], key=lambda i: -persons[i].get('prob', 0)):
+            if i not in used:
+                pick[ch] = i
+                used.add(i)
+                path[ch] = 'greedy'
+                break
+    LAST_PID_PATH[:] = [path.get(ch, 'none') for ch in sorted(chains) if len(chains[ch]) >= 3]
+    for ci, (ch, kps) in enumerate(sorted(chains.items())):
+        if len(kps) < 3:
+            continue
+        bi = pick.get(ch)
         if bi is not None:
             used.add(bi)
         inst.append(dict(chain=ch, person_id=(persons[bi].get('person_id') if bi is not None else -1),
@@ -614,7 +654,15 @@ def person_masks(img_path, rec, a, mask_dir):
             for j in range(i + 1, len(raw)):
                 mi, mj = raw[i]['m'], raw[j]['m']
                 inter = int((mi & mj).sum())
-                if inter and inter > 0.5 * min(int(mi.sum()), int(mj.sum())):
+                if not inter:
+                    continue
+                # 身份门槛：只有"同一个人"才允许合并（M1 把一个角色拆成上身/腿两条链时 pid 相同；
+                # 两个贴身的人 pid 不同）。少了这道门槛，两人轮廓 95%+ 重叠就会被并回一个人 ——
+                # 改前就是这样：4/6 张双人图默认只出 1 个掩版。两边都 -1（老 JSON / 无 pid）时仍按
+                # 纯几何合并，保持旧行为。
+                if raw[i].get('person_id', -1) != raw[j].get('person_id', -1):
+                    continue
+                if inter > 0.5 * min(int(mi.sum()), int(mj.sum())):
                     a_, b_ = find(i), find(j)
                     if a_ != b_:
                         parent[b_] = a_

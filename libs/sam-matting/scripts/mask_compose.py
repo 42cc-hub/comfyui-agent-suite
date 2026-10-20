@@ -41,6 +41,9 @@ def main():
     ap.add_argument('--like', default=None, help='按这张图的尺寸建掩版（与 --size 二选一）')
     ap.add_argument('--size', default=None, help='WxH')
     ap.add_argument('--box', action='append', default=[], help='x0,y0,x1,y1[,x0,y0,x1,y1...]（可多次）')
+    ap.add_argument('--ellipse', action='append', default=[],
+                    help='x0,y0,x1,y1：该矩形的**内接椭圆**（可多次）。圆/方一类的物体（苹果、球、头）'
+                         '用网格数格子读出大致范围后，内接椭圆比矩形更贴形状、不吃四个角')
     ap.add_argument('--circle', action='append', default=[], help='x,y,r（可多次）')
     ap.add_argument('--poly', default=None, help='"x,y;x,y;..."')
     ap.add_argument('--union', nargs='+', action='extend', default=[], help='并进来的掩版文件（可多次/可多个）')
@@ -88,6 +91,14 @@ def main():
         x, y, r = [int(v) for v in spec.replace(' ', '').split(',')]
         r = max(1, r - a.shrink)
         cv2.circle(m, (x, y), r, 1, -1)
+    for spec in a.ellipse:
+        vals = [int(v) for v in spec.replace(' ', '').split(',')]
+        for i in range(0, len(vals) - 3, 4):
+            x0, y0, x1, y1 = vals[i:i + 4]
+            if a.shrink:
+                x0, y0, x1, y1 = x0 + a.shrink, y0 + a.shrink, x1 - a.shrink, y1 - a.shrink
+            cx, cy = (x0 + x1) // 2, (y0 + y1) // 2
+            cv2.ellipse(m, (cx, cy), (max(1, (x1 - x0) // 2), max(1, (y1 - y0) // 2)), 0, 0, 360, 1, -1)
     if a.poly:
         pts = np.array([[int(v) for v in p.split(',')] for p in a.poly.split(';') if p.strip()], np.int32)
         if len(pts) >= 3:

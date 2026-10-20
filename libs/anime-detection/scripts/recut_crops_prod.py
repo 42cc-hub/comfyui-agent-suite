@@ -41,7 +41,7 @@ def main():
     ap = argparse.ArgumentParser()
     ap.add_argument('--out', default=os.path.join(DATA, 'crops_prod'))
     ap.add_argument('--min-iou', type=float, default=0.3)
-    ap.add_argument('--det', default=os.path.join(PROJ, 'runs', 'm2a_det_996img_960', 'weights', 'best.pt'))
+    ap.add_argument('--det', default=os.path.join(PROJ, 'runs', 'm2a_det_fix_v2', 'weights', 'best.pt'))
     ap.add_argument('--foot', default=os.path.join(PROJ, 'runs', 'm2a_foot_v1', 'weights', 'best.pt'))
     ap.add_argument('--limit', type=int, default=0)
     ap.add_argument('--imgsz', type=int, default=1280)

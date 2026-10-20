@@ -1,4 +1,4 @@
-"""把预标注结果整理成 **ultralytics 能直接吃的数据集**（图像 + 标签同目录，train/val 划分 + yaml）。
+r"""把预标注结果整理成 **ultralytics 能直接吃的数据集**（图像 + 标签同目录，train/val 划分 + yaml）。
 
 为什么需要它：预标注把图像留在**来源目录**（逃出那 8 张在 pixiv 任务下、temple 的在 <你的图片目录>），
 而 YOLO 训练要求 `images/<split>` 与 `labels/<split>` 成对出现 —— 这里负责**只拷贝**过去并写 yaml。
@@ -212,6 +212,9 @@ def main():
     ap = argparse.ArgumentParser()
     ap.add_argument('--val-frac', type=float, default=0.2)
     ap.add_argument('--copy', action='store_true', help='保留开关（默认就是拷贝）')
+    ap.add_argument('--stages', nargs='+', default=['det', 'pose', 'pose17', 'face', 'gag'],
+                    help='只重建这几段（默认全部）。**修 M2a 手/脚框时用 `--stages det`**：'
+                         '跑全量会把 ds_face/ds_pose 的 train/val 划分一起重写，没必要也危险')
     a = ap.parse_args()
     rng = random.Random(20261010)
 
@@ -224,32 +227,36 @@ def main():
           (len(recs) - len(val), len(val), sum(1 for r in recs if r['image'] in val and r['origin'] == 'escape')))
 
     classes = open(os.path.join(LBL, 'det', 'body', 'classes.txt'), encoding='utf-8').read().split()
-    n = stage(recs, val, DS_DET, os.path.join('det', 'body'), os.path.join(DS_DET, 'det_body.yaml'),
-              'names:\n' + ''.join('  %d: %s\n' % (i, c) for i, c in enumerate(classes)))
-    print('det 数据集：%s（train %d / val %d，类别 %s）' % (DS_DET, n['train'], n['val'], classes))
+    if 'det' in a.stages:
+        n = stage(recs, val, DS_DET, os.path.join('det', 'body'), os.path.join(DS_DET, 'det_body.yaml'),
+                  'names:\n' + ''.join('  %d: %s\n' % (i, c) for i, c in enumerate(classes)))
+        print('det 数据集：%s（train %d / val %d，类别 %s）' % (DS_DET, n['train'], n['val'], classes))
 
-    kpt = len(open(os.path.join(LBL, 'pose', 'body', 'pose_config.txt'), encoding='utf-8')
-              .read().split('kpt_names:')[1].strip().strip('[]').split(','))
-    n = stage(recs, val, DS_POSE, os.path.join('pose', 'body'), os.path.join(DS_POSE, 'pose_body.yaml'),
-              'names:\n  0: person\nkpt_shape: [%d, 3]\nflip_idx: %s\n' %
-              (kpt, list(range(kpt))))
-    print('pose 数据集：%s（train %d / val %d，kpt_shape=[%d,3]）' % (DS_POSE, n['train'], n['val'], kpt))
+    if 'pose' in a.stages:
+        kpt = len(open(os.path.join(LBL, 'pose', 'body', 'pose_config.txt'), encoding='utf-8')
+                  .read().split('kpt_names:')[1].strip().strip('[]').split(','))
+        n = stage(recs, val, DS_POSE, os.path.join('pose', 'body'), os.path.join(DS_POSE, 'pose_body.yaml'),
+                  'names:\n  0: person\nkpt_shape: [%d, 3]\nflip_idx: %s\n' %
+                  (kpt, list(range(kpt))))
+        print('pose 数据集：%s（train %d / val %d，kpt_shape=[%d,3]）' % (DS_POSE, n['train'], n['val'], kpt))
     # COCO-17 版（复用 yolo11n-pose 的预训练头；见 export_labels.export_pose_coco17 的说明）
-    if os.path.isdir(os.path.join(LBL, 'pose', 'body17')):
+    if 'pose17' in a.stages and os.path.isdir(os.path.join(LBL, 'pose', 'body17')):
         from export_labels import COCO17_FLIP
         n17 = stage(recs, val, DS_POSE17, os.path.join('pose', 'body17'),
                     os.path.join(DS_POSE17, 'pose_body17.yaml'),
                     'names:\n  0: person\nkpt_shape: [17, 3]\nflip_idx: %s\n' % COCO17_FLIP)
         print('pose17(COCO-17) 数据集：%s（train %d / val %d，kpt_shape=[17,3]）'
               % (DS_POSE17, n17['train'], n17['val']))
-    nf = stage_face(recs, val)
-    print('face 数据集：%s（256 裁剪图 train %d / val %d，框 %d，类别 %s）'
-          % (os.path.join(DATA, 'ds_face'), nf['train'], nf['val'], nf['boxes'], FACE_CLASSES))
-    ng = stage_gag(val)
-    if ng['train'] or ng['val']:
-        print('gag 数据集（专用小检测器）：%s（**只收覆盖完整的 head** train %d / val %d，框 %d：%s；'
-              '因覆盖不完整排除 %d 张）' % (DS_GAG, ng['train'], ng['val'], ng['boxes'], ng.get('per'),
-                                       ng['skip']))
+    if 'face' in a.stages:
+        nf = stage_face(recs, val)
+        print('face 数据集：%s（256 裁剪图 train %d / val %d，框 %d，类别 %s）'
+              % (os.path.join(DATA, 'ds_face'), nf['train'], nf['val'], nf['boxes'], FACE_CLASSES))
+    if 'gag' in a.stages:
+        ng = stage_gag(val)
+        if ng['train'] or ng['val']:
+            print('gag 数据集（专用小检测器）：%s（**只收覆盖完整的 head** train %d / val %d，框 %d：%s；'
+                  '因覆盖不完整排除 %d 张）' % (DS_GAG, ng['train'], ng['val'], ng['boxes'], ng.get('per'),
+                                           ng['skip']))
     print('cls 数据集在 %s（由 scripts/export_labels.py 从 index.csv 切分）' % os.path.join(DATA, 'cls'))
 
 

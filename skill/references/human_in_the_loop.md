@@ -21,7 +21,7 @@ human_canvas action=status task=<token>     # when the human replies
   → annotation.raster.layers[].file  = one PNG per layer (alpha = what was painted)
 ```
 
-Learnings that make this cheap:
+Rules that make this cheap:
 
 - **Ask for two layers, not one:** L1 「repaint」 and L2 「keep」. `keep` is the human's
   *protection switch* — fingers, a hair ornament, a region that is already good. Mask =
@@ -55,10 +55,9 @@ crop, halve them for the original.
 
 ## `ps_edit` — hand a file to Photoshop, verify by content
 
-> ### ⛔ 硬规则：**一次只能开一个文件**
-> **绝对不要连着调两次 `ps_edit action=open`**（也不要在 PS 里已经开着文件时再 open 另一个）。
-> 本机实测：同时打开两个文件会让 **Photoshop 直接卡死**，人只能强杀进程，
-> 未保存的手改全丢。要给人看/改第二张时，**先让人存了并关掉当前这张**，再 open 下一个。
+> ### ⛔ 硬规则：**一次只能开一个文件**（`[measured, n=1]` 未复验；后果不可逆 ⇒ 按硬规则执行）
+> **绝对不要连着调两次 `ps_edit action=open`**，也不要在 PS 已打开文件时再 open 另一个：同时开两个文件会让
+> **Photoshop 直接卡死**，人只能强杀进程，未保存的手改全丢。要改第二张时**先让人保存并关掉当前这张**。
 > 一次交接 = 一个文件 = 一轮对话。
 
 ```
@@ -86,7 +85,7 @@ crop, halve them for the original.
   (`Ctrl+Shift+V` in PS, or paste-with-mask locally). Ship both files (base + layer) when that is
   easier for them than blending a flat composite.
 
-## Division of labour that actually works
+## Division of labour（一圈只做一种活）
 
 - The agent proposes the **region** (measured, with a grid overlay), the human corrects it by
   painting; the agent turns paint into a precise mask, runs the model, and shows a **1:1

@@ -9,7 +9,7 @@ Two services are wired up on this host:
 
 | Service | Script / route | Notes |
 |---|---|---|
-| 百炼 / DashScope `qwen-image-edit-max` | `scripts/bailian_image_edit.py edit IN.png OUT.png "<instruction>" [--ref R.png] [--prompt-file F]` (key: `scripts/bailian_key.json`) | synchronous, **20–50 s**, output re-rendered by the model |
+| 百炼 / DashScope `qwen-image-edit-max` | `scripts/bailian_image_edit.py edit IN.png OUT.png "<instruction>" [--ref R.png] [--prompt-file F]` (key: `~/.dsh/secrets/config/keys.json`, or `$BAILIAN_KEY_PATH` / `$DASHSCOPE_API_KEY`) | synchronous, **20–50 s**, output re-rendered by the model |
 | GPT-image (OpenAI) | no local script — hand the human a **package** (crop + mask + prompt) and merge what comes back | better at **legible text**; needs an explicit mask (`transparent = editable`) |
 
 ## ① 参考图必须给 —— 否则人物和环境都会对不上
@@ -46,7 +46,7 @@ python scripts/bailian_image_edit.py edit IN.png OUT.png "<instruction>" \
   because you are going to downscale the answer back.
 - **`.jpeg` files that are really WEBP** (LoRA previews) make `read_image` fail — convert with
   PIL first.
-- **Pixiv-adjacent safety:** a hosted edit call **uploads the picture to a third party**. Run the
+- **第三方上传风险:** a hosted edit call **uploads the picture to a third party**. Run the
   local gate first (`references/output_safety_gate.md`).
 - **Input-side content moderation rejects R-18 instructions (measured).** Asking
   DashScope/百炼 to *add rope bondage* came back in ~21 s as **HTTP 400** with
@@ -146,66 +146,3 @@ Each call is a full re-render (20–50 s), so **iterate on the prompt, not on th
 but budget a merge + a verification step per call, and never chain two cloud calls without
 looking at the intermediate. Three prompt revisions (`v1`, `v2`, `v3`) that each fail on a
 different axis are normal; keep them as counterexamples.
-
-
----
-
-## Cloud APIs — generation and editing (and how to merge the answer back)
-
-
-
-Local ComfyUI is the default; a hosted model earns its place where the local stack is
-structurally weak: **text inside the image** (in-image Chinese/Japanese lettering, calligraphy,
-signage), adding/refining objects on top of a hand-edited base, and scene-level cleanup.
-
-| Service | Route | Facts |
-|---|---|---|
-| 百炼 / DashScope `qwen-image-edit-max` | `scripts/bailian_image_edit.py edit IN.png OUT.png "<instruction>" [--ref R.png] [--prompt-file F]` | synchronous, 20–50 s, model re-renders (no alpha, its own output size) |
-| GPT-image (OpenAI) | hand the human a **package** (crop + mask + prompt) — no local script | best at **legible text**; mask convention is **transparent = editable** |
-
-**① 参考图是必给的，不是可选。** `--ref` 里的图是**内容参考**：
-画**某个角色**时，云端不会照你的文字去认人 —— 先在**本地出该角色的三视图**（正/侧/背，干净背景）
-或找一张该角色的图当参考；有**具体场景**需求时同理（环境/道具/光线也要给参考图）。
-**不给参考图 ⇒ 环境和人物都会对不上**（模型按自己的先验编）。
-
-```
-# 角色：先本地出一张干净的三视图，再拿它当参考
-... 本地 Anima/IL 出 char_sheet.png（front / side / back，plain background）
-python scripts/bailian_image_edit.py edit IN.png OUT.png "<instruction>" --ref char_sheet.png
-# 场景：再把环境参考也一起给（可重复 --ref）
-python scripts/bailian_image_edit.py edit IN.png OUT.png "<instruction>" --ref char_sheet.png --ref room.png
-```
-
-其余五条（都是实测，细节在 `references/cloud_edit_and_merge.md`）：
-
-- **参考图是"内容参考"，不是控制图** —— 所以它**指定"是什么"，不指定"怎么摆"**：
-  只给骨架图 ⇒ 姿势错、还多出一个人；**姿势要用文字描述**。两张图的分工是
-  **`--ref` 定人物与环境，文字定动作与构图**。
-- **Hosted models refuse R-18 edits outright** (measured): DashScope/百炼 answered
-  **HTTP 400 `DataInspectionFailed`** — *"Input data may contain inappropriate content"* — to an
-  instruction that asked to **add rope bondage**. The filter reads the **instruction text**, so no
-  amount of wording craft gets it through, and **rewording to slip past it is evading a provider's
-  safety control — don't do it**. Split the job instead: the innocent siblings of the same edit went
-  through fine (*"摆成太极式中心对称躺姿"* ✓, *"把床单上的图案换成普通床单被子枕头"* ✓) ⇒
-  **innocent steps → cloud, rope/BDSM/undress steps → local**.
-  **连"不要 XX"都不能写** —— 指令里写了 *"画面里不要出现绳子"* 本身就吃了 400
-  （过滤器匹配**关键词**，"禁止"也算提到；同"正向写否定无效"那个坑）；**输入图也会被审** ——
-  一张正面朝观众的坐姿＋抬腿（穿着完整、无绳）被拒，而同角色的站姿四视图能过 ⇒ **同一姿势的侧视/背面更容易过**。
-- **They do not respect the mask.** GPT-image's answer differed from the sent crop by >12 in
-  **3.57 %** of the *outside-mask* pixels, with a ±6 px alignment sweep choosing (0,0) as best —
-  tonal drift, not a shift. Bailian repainted a night sky **13 levels brighter** and moved a rope's
-  entry point **56 px**. So: **paste back by mask, never replace the image.**
-- **Fine-grained content rules get ignored** — "write only the six visible characters" came back as
-  the whole couplet, with a mis-written character and one inserted. List the characters one by one,
-  and prefer the model that got 6/6 right.
-- **Never let a cloud model own a thin structure** (rope, leash, cord) that must line up with the
-  rest of the picture: keep those pixels from the original in every merge mode.
-
-Merge patterns that work: **mask paste** (tool respected the mask) · **subject-only** (mask =
-old∪new subject silhouette — background stays bit-exact; needed when the tool also re-lit the
-background) · **rect / vertical-split** (leave the seam to the human in PS, or combine two
-strengths: body 0.3 + sky 0.5 with a 30 px ramp). Two guards: a **dark guard** in the feather ring
-(`min(base, result)`, kills the halo of a lighter cloud sky) and a **sky match** (add the median
-per-channel offset measured on non-subject pixels). Verify with
-`diff_report.py base.png merged.png --mask m.png`: in-mask ≈ 30 % changed, **out-mask 0.0000 %**.
-

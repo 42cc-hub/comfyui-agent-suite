@@ -2,7 +2,7 @@
 
 给写提示词时用的速查。**展开的规则与证据**在 `references/prompt_writing.md`；
 本表只放**可直接抄的块**和**查表用的词**。每条模板后面标了它的来源记录
-（`wf/<name>.json`，语料库在 `agent_work\pixiv_publishing\experiments\prompt_organize\`）。
+（`wf/<name>.json`，语料库在 （我们的实验））。
 
 30 秒流程：
 
@@ -337,7 +337,7 @@ Her dress is rolled up by the crotch rope, revealing her white panties.
 ### 整体缚法姿势（14 种实测，Anima 直出 832×1216、2 种子/姿势）
 
 `✅` 一眼认得出、绳路合理 · `⚠️` 方向对但关键细节不到位（**0 个认不出**）
-语料：`pixiv_publishing/experiments/shibari_type/`（提示词、28 张图、联系表）
+语料：（我们的实验）（提示词、28 张图、联系表）
 
 | 日文名 | 英文 | 该抄的 tag | 结果 |
 |---|---|---|---|
@@ -478,7 +478,7 @@ LoRA：`LoraLoader` 节点给强度（`strength_model` / `strength_clip`），
 
 - 所有"频次"= document frequency，全表数字取自 `analysis/tag_df.csv`
   （`analyze_corpus.py` 生成，与 `corpus_stats.md` 同源），语料 536 条有提示词的记录。
-- 统计脚本：`agent_work\pixiv_publishing\experiments\prompt_organize\`
+- 统计脚本：（我们的实验）
   的 `analyze_corpus.py` / `analyze_extra.py` / `compare_groups.py`；
   单 tag 查值：`check_cheatsheet_tags.py`。
 - **频次只是惯例，不是效果**；带"实测"的条目来自我们自己的对照出图，

@@ -12,7 +12,7 @@
   4) 入口行数不超过预算（棘轮：只许降）
   5) 入口的一级标题恰好 1 个（围栏代码块里的 # 不算）
 
-用法：python scripts/skill_lint.py [--budget 700]
+用法：python scripts/skill_lint.py [--budget N]   # N 默认 406，即当前实际行数，只许降
 退出码 0 = 全过；1 = 有硬失败。
 """
 import argparse
@@ -32,7 +32,7 @@ HERE = os.path.dirname(os.path.abspath(__file__))
 SKILL = os.path.dirname(HERE)
 ENTRY = os.path.join(SKILL, 'SKILL.md')
 # 少数引用指向 skill 之外：本机共享工具在 `agent_work\pixiv_publishing\pipeline\`，
-# 文档里一律写成 `tools/xxx.py`（工作区里 agent_work 那层）。发布版由
+# 文档里一律写成 （工作区里 agent_work 那层）。发布版由
 # release_build.py 把它们改写成"自带工具"的说明。这两类都按工作区解析，不存在才算断链。
 WORKSPACE = r'<你的 ComfyUI 安装目录>'
 WORKSPACE_AGENT = os.path.join(WORKSPACE, 'agent_work')
@@ -76,10 +76,12 @@ def check_paths(docs):
     for p in docs:
         rel_owner = os.path.relpath(p, SKILL).replace(os.sep, '/')
         text = read(p)
-        cands = [(m, os.path.join(SKILL, m.replace('/', os.sep))) for m in PATH_RE.findall(text)]
-        cands += [(m, os.path.join(WORKSPACE_AGENT, m.replace('/', os.sep))) for m in EXT_RE.findall(text)]
-        for m, full in cands:
-            if os.path.exists(full):
+        cands = [(m, [os.path.join(SKILL, m.replace('/', os.sep))]) for m in PATH_RE.findall(text)]
+        cands += [(m, [os.path.join(WORKSPACE, m.replace('/', os.sep)),
+                       os.path.join(WORKSPACE_AGENT, m.replace('/', os.sep))])
+                  for m in EXT_RE.findall(text)]
+        for m, paths in cands:
+            if any(os.path.exists(x) for x in paths):
                 continue
             missing.setdefault(m, set()).add(rel_owner)
     return missing
@@ -102,8 +104,8 @@ def check_orphans(docs):
 
 def main():
     ap = argparse.ArgumentParser()
-    ap.add_argument('--budget', type=int, default=580,
-                    help='入口行数上限（棘轮：2026-10-13 瘦身后 561 行，只许降不许升）')
+    ap.add_argument('--budget', type=int, default=406,
+                    help='入口行数上限（棘轮：2026-10-21 宪章化 411 行 → 同日去掉三篇内部文档引用后 406 行，只许降不许升）')
     a = ap.parse_args()
     docs = scan_docs()
     entry = read(ENTRY)

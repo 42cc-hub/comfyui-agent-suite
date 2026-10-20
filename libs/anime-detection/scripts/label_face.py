@@ -39,7 +39,12 @@ PROJ = os.path.dirname(HERE)
 PRE = os.path.join(PROJ, 'data', 'prelabel')
 FIELDS = ['idx', 'crop', 'source', 'head', 'target', 'prop', 'prop_src', 'prop_conf',
           'wd14', 'verdict', 'boxes', 'edited', 'note']
-TARGET_CN = {'gag': '口塞 gag', 'blindfold': '眼罩 blindfold', 'eye': '眼睛 eye', 'mouth': '嘴 mouth'}
+TARGET_CN = {'gag': '口塞 gag', 'blindfold': '眼罩 blindfold', 'eye': '眼睛 eye', 'mouth': '嘴 mouth',
+             # 2026-10-14 起这个画框器也用来修 **M2a 手/脚框**（同一套交互：预填 → 拖角改大小 → 1 采纳 / 3 没有）
+             'hand': '手 hand（要含手指）', 'foot': '脚 foot（要含脚趾/远端）',
+             # 2026-10-21 task-7 多人交互队列：人框是 F3「一框两人」的判据，头框只作可选
+             'person': '人 person（整个身体，含四肢末端）',
+             'head': '头 head（面部到下巴）'}
 HANDLE = 9                      # 角的抓取半径（屏幕像素）
 
 
@@ -219,8 +224,13 @@ class Canvas(QWidget):
         r = self.boxes[i]['r']
         x0, x1 = sorted((r[0], r[2]))
         y0, y1 = sorted((r[1], r[3]))
-        r = [max(0.0, min(x0, 255.0)), max(0.0, min(y0, 255.0)),
-             max(0.0, min(x1, 255.0)), max(0.0, min(y1, 255.0))]
+        # 夹到**图像尺寸**，不是写死的 255 —— 原来这里是 `min(x, 255.0)`（给 M2b 的 256×256 脸裁图写的），
+        # 换到 M2a 手/脚框修复时裁图和预填框都比 255 大（例如预填 324,324,757,645）⇒
+        # 松手时坐标被夹回 255 以内，看上去"拖完又弹回去"（2026-10-14 用户实测到的 bug）。
+        W = float(self.pix.width()) if self.pix is not None else 255.0
+        H = float(self.pix.height()) if self.pix is not None else 255.0
+        r = [max(0.0, min(x0, W)), max(0.0, min(y0, H)),
+             max(0.0, min(x1, W)), max(0.0, min(y1, H))]
         if r[2] - r[0] < 3 or r[3] - r[1] < 3:
             del self.boxes[i]                      # 误点：不留退化框
             if mode != 'new':
@@ -245,13 +255,14 @@ class Canvas(QWidget):
 
 
 class Labeler(QMainWindow):
-    def __init__(self, queue, only_unlabeled=False):
+    def __init__(self, queue, only_unlabeled=False, pre=None, title=None):
         super().__init__()
-        self.setWindowTitle('M2b 面部组标注器（gag / blindfold / eye / mouth）—— anime_detection_suite')
+        self.setWindowTitle(title or 'M2b 面部组标注器（gag / blindfold / eye / mouth）—— anime_detection_suite')
         self.resize(1180, 900)
         with io.open(queue, encoding='utf-8-sig') as fh:
             self.rows = list(csv.DictReader(fh))
         self.queue = queue
+        self.pre = pre or PRE          # `--pre`：裁图目录（M2a 框修复用的是 data/boxfix/crops）
         self.pos = 0
         self.only_unlabeled = only_unlabeled
         self.edited = False
@@ -273,8 +284,13 @@ class Labeler(QMainWindow):
         self.scroll.setWidgetResizable(False)
         h.addWidget(self.scroll, 3)
 
-        side = QVBoxLayout()
-        h.addLayout(side, 1)
+        # 侧栏定宽：QLabel 里的长坐标串（"x,y-x,y;x,y-..."）没有断行机会，
+        # 会把 sizeHint 撑成整行宽度、把图像区挤压成一条 —— 用定宽容器兜住。
+        side_widget = QWidget()
+        side_widget.setFixedWidth(380)
+        side = QVBoxLayout(side_widget)
+        side.setContentsMargins(8, 8, 8, 8)
+        h.addWidget(side_widget, 0)
 
         self.head = QLabel('—')
         self.head.setStyleSheet('font-size:17px; font-weight:bold;')
@@ -389,13 +405,19 @@ class Labeler(QMainWindow):
         prop = parse_box(r.get('prop'))
         what = {'draw': '有目标 · 人工画的框', 'pass': '有目标 · 采纳了预标注',
                 'fail': '有目标 · 否掉预标注后人工画的', 'neg': '没有这个目标'}.get(v, '（还没判）')
+        # 坐标不进正文（人只看框的位置，不看数）：只给前 2 个 + …，完整串进悬停提示。
+        brief = '（还没判）'
+        if v:
+            first = ' '.join('%d,%d-%d,%d' % tuple(int(float(x)) for x in b) for b in saved[:2])
+            brief = '%s ｜ %d 个框%s' % (what, len(saved), ('（' + first + (' …' if len(saved) > 2 else '') + '）') if first else '')
         self.meta.setText('%s\n来源: %s ｜ head%s\n记录: %s%s\n%s' % (
             r['crop'], r.get('source', ''), r.get('head', ''),
-            ('%s ｜ %d 个框 %s' % (what, len(saved), r.get('boxes', ''))) if v else '（还没判）',
-            ('　（原始预标注 (%d,%d)-(%d,%d) 只作对照，不再画出来）' % tuple(prop)) if (prop and v) else '',
+            brief,
+            ('　（原预标注只作对照，不再画出来）' if (prop and v) else ''),
             r.get('note', '')))
+        self.meta.setToolTip(r.get('boxes', '') or '')
         self.canvas.edited = False
-        self.canvas.set_image(os.path.join(PRE, r['crop']))     # 内部会把 dirty/ref 清干净
+        self.canvas.set_image(os.path.join(self.pre, r['crop']))     # 内部会把 dirty/ref 清干净
         if v and saved:
             self.canvas.boxes = [{'r': [float(x) for x in b], 'kind': 'user'} for b in saved]
             if v in ('pass', 'fail') and prop:
@@ -768,6 +790,9 @@ def selftest():
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument('--queue', default=os.path.join(PROJ, 'data', 'm2b_queue', 'index.csv'))
+    ap.add_argument('--pre', default=PRE,
+                    help='裁图目录（默认 data/prelabel）。修 M2a 手/脚框时指 data/boxfix/crops')
+    ap.add_argument('--title', default=None, help='窗口标题（换个任务时改一下，免得看错工具）')
     ap.add_argument('--only-unlabeled', action='store_true')
     ap.add_argument('--selftest', action='store_true')
     a = ap.parse_args()
@@ -776,9 +801,9 @@ def main():
         app = QApplication(sys.argv)
         sys.exit(selftest())
     if not os.path.exists(a.queue):
-        raise SystemExit('找不到队列：%s（先跑 scripts/m2b_propose.py）' % a.queue)
+        raise SystemExit('找不到队列：%s（先跑 scripts/m2b_propose.py 或 build_boxfix_queue.py）' % a.queue)
     app = QApplication(sys.argv)
-    w = Labeler(a.queue, a.only_unlabeled)
+    w = Labeler(a.queue, a.only_unlabeled, pre=a.pre, title=a.title)
     w.show()
     sys.exit(app.exec_())
 

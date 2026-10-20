@@ -1,9 +1,9 @@
 # Editing a small region of a large image (SmartImageCrop / SmartImageStitcher)
 
-For when a detail is only a few pixels wide on the finished panel — a shoelace knot, an
-eyelet, a ring — and a whole-image pass cannot resolve it: at low denoise the detail stays
-blurry, and at high denoise the entire picture drifts. Verified on a 1400×3200 comic page
-and its 832×1216 panels, ComfyUI 0.24, RTX 3060 6 GB.
+Use when a detail is only a few pixels wide on the finished panel (shoelace knot, eyelet,
+ring) and a whole-image pass cannot resolve it: at low denoise it stays blurry, at high
+denoise the picture drifts. Conditions for every number below: 1400×3200 comic page + its
+832×1216 panels, ComfyUI 0.24, RTX 3060 6 GB.
 
 ## The shape of the solution
 
@@ -14,9 +14,8 @@ and its 832×1216 panels, ComfyUI 0.24, RTX 3060 6 GB.
 | `SmartImageCrop` | crops to the MASK's bbox, then scales so the long side lands in `[min_resolution, max_resolution]`. Outputs `crop_image`, `crop_mask`, `stitcher_info`, `preview_overlay` |
 | `SmartImageStitcher` | pastes the processed crop back using `stitcher_info`, with `feather_pixels`, `blend_mode`, `enable_color_match` |
 
-**These exist to edit huge images without blowing VRAM** — cut the region out, process it at
-its own scale, paste it back. Using them the other way round (small image, magnified crop)
-throws away the point.
+**Purpose: edit huge images without blowing VRAM.** Using them the other way round (small image,
+magnified crop) throws away the point.
 
 ### Cost depends on the crop, not the canvas
 
@@ -76,10 +75,9 @@ is *texture*, not geometry.
 
 ## Feather hides a problem you should not have
 
-Drawing with the whole rectangular crop re-noised means the crop's border can never match
-its surroundings, so a seam appears and `feather_pixels` is used to disguise it. That is the
-wrong fix. `SetLatentNoiseMask` limits the renoising to the mask, so everything outside comes
-back untouched and **no seam can form**.
+Re-noising the whole rectangular crop breaks its border, and `feather_pixels` only disguises the
+seam. `SetLatentNoiseMask` re-noises inside the mask only, so everything outside comes back
+untouched and **no seam can form**.
 
 Measured on the same edit (changed pixels vs the source, threshold 8/255):
 
@@ -128,14 +126,12 @@ resize), and pass the **same shaped mask to `SmartImageStitcher`'s `mask` input*
 equals the repaint region exactly. `feather_pixels` is not a cause (it blends two identical images in the
 passthrough → no change). Script + raw numbers: `task/lumine_hospital_20261004/verify_stitcher.py` (P1–P7).
 
-> ⚠️ An earlier version of this section said this route "is not bit-exact outside the mask (0.23 % Box Feather /
-> 0.53 % Mask Feather)", and `SKILL.md` went further, blaming `SmartImageStitcher` itself for 4.31 %.
-> **Both attributions were wrong** — the numbers were real but they came from the crop resize and the unwired
-> mask, not from the stitcher, and the "0.23 %"/"4.31 %" figures are not properties of this route.
+> ⚠️ The "0.23 % Box Feather / 0.53 % / 4.31 %" figures in older notes are **not** properties of
+> this route: they came from the crop resize and the unwired mask, not from `SmartImageStitcher`.
 
 ## 预算怎么分：**抽卡修结构，重绘修微观**
 
-> **多轮抽卡是留给"出底图"的；重绘不需要多轮。** 理由不是重绘不好用，而是**两者能修的东西不同**：
+> **多轮抽卡留给"出底图"；重绘不需要多轮** —— 两者能修的东西不同：
 
 | 手段 | 能改 | 改不了 |
 |---|---|---|
@@ -148,8 +144,9 @@ passthrough → no change). Script + raw numbers: `task/lumine_hospital_20261004
 - **结构一旦成立，重绘的边际收益就很小** —— 布局固定、角色身份由 LoRA/提示词钉住、外观已符合时，
   一遍就够；第二遍不会产生可辨的差异，而且**每一遍都在对 mask 外做一次 VAE 往返**（见上节），
   还会把已经对的部分重新置于风险里。**实测**：同一张双人底图、4 个种子各做一遍
-  区域重绘，四张几乎没有可辨差异；mask 外的差异 mean 1.6 / p99 12（肉眼不可见），
-  mask 内 mean 55–62（真改动）——**收益集中在"选定的一块"上，不在"多跑几轮"上**。
+  区域重绘，四张几乎没有可辨差异；mask 外差异 mean 1.6 / p99 12（肉眼不可见），
+  mask 内 mean 55–62（真改动）——**收益集中在"选定的一块"，不在"多跑几轮"**
+  （单次观察：1 张双人底图 × 4 种子，n=4，未复验）。
 - 所以：**底图的抽卡预算按"宏观失误模式"给**（双人易互换/人数错/合并、多人易污染 ⇒ 多抽几张），
   **重绘按"要修的那一块"给一次**，然后**在成品上验收**，而不是反复重绘。
 
@@ -163,9 +160,8 @@ passthrough → no change). Script + raw numbers: `task/lumine_hospital_20261004
    `another girl sitting beside her`（必要时加两三个不会污染的颜色词，如 `blue hair`），
    **不要**把另一个人的完整外观块写进去 —— 否则模型会按你的文字重画她、或把她的特征带到当前这个人身上。
    实测（Anima 双人）：这样写之后当前人物拿到自己的身份，另一个人保持原样、人数不变。
-4. **不能跨基底挂 LoRA**：这一轮想给第二个角色也挂 LoRA 时发现她的 LoRA 是 SDXL
-   （`modelspec.architecture = stable-diffusion-xl-v1-base/lora`、tensor 键 `lora_te1_*`），
-   而底图是 Anima（qwen-image）—— **挂不上**。要么整条流水线换成该 LoRA 的基底，
+4. **不能跨基底挂 LoRA**：SDXL 的 LoRA（`modelspec.architecture = stable-diffusion-xl-v1-base/lora`、
+   tensor 键 `lora_te1_*`）挂不到 Anima（qwen-image）底图上。要么整条流水线换成该 LoRA 的基底，
    要么这个人**只用文字描述**（并在记录里写明这是妥协）。
 
 > 与上一节 §"The prompt must describe only what is inside the crop" 的关系：那条针对**裁切型**
@@ -181,7 +177,7 @@ or its behaviour changes silently.
 ## Denoise sets how many pixels wide an edit can reach — and that scales with the image
 
 > 宏观层面这条决定"这一步该给多少 denoise"：**0.2–0.4 材质 / 0.5–0.6 比例与换引擎 /
-> 0.8–0.9 结构拓扑 / 1.0 重抽**。整条主线见 `references/production_pipeline.md`。
+> 0.8–0.9 结构拓扑 / 1.0 重抽**。整条主线见 `（未随仓库发布的内部文档）`。
 > 实测补充（Anima 2000² 整图）：**绳"连到床框"这种拓扑，0.4/0.6/0.75 全出不来，0.9 才出来**；
 > 而 0.4~0.75 这一档只改材质与颜色——**换材质/颜色靠提示词，不靠加 denoise**。
 
@@ -234,14 +230,14 @@ The existing rule already *is* the intended thing: **a single 4x-AnimeSharp pass
 sharpening pass, and the LANCZOS halving is the precise size control.** The extra 4x only
 re-applies sharpening.
 
-> A first attempt at this chain multiplied the wrong way and produced 6656×9728 / 47 MB from
-> an 832px panel. When chaining fixed-factor models, write the dimension math down and check
-> the output size before looking at the picture.
+> When chaining fixed-factor models, write the dimension math down and check the output size
+> before looking at the picture (a wrong multiplication produced 6656×9728 / 47 MB from an
+> 832px panel).
 
 ## 分区定 denoise：IL 只治人物，别碰场景结构
 
-**结论（实测，代价见下）**：拿 IL 去"整体提升质感"是错的 —— 它会**重画结构**，
-而 AI 生成图的结构（棋盘格线、棋子、建筑、文字）经不起重画。正确做法是**按区域分两次 inpaint**：
+**不要拿 IL 整图"提升质感"** —— 它会**重画结构**，而生成图的结构（棋盘格线、棋子、建筑、文字）
+经不起重画。正确做法是**按区域分两次 inpaint**：
 
 | 区域 | denoise | 目的 |
 |---|---|---|
@@ -250,7 +246,7 @@ re-applies sharpening.
 
 即：**环境一刀、人物一刀**（各自蒙版 + `SetLatentNoiseMask`），**不要整图一刀**。
 
-依据（同一张 2000×1016，IL，无 LoRA，same prompt）：
+依据（单次观察：同一张 2000×1016，IL，无 LoRA，same prompt，n=1，未复验）：
 
 - 整图 **0.45** ⇒ 人物质感确实变好，但**棋盘格线扭曲、白马化成蜡烛、马头消失** ✗（放大棋盘区逐格对比可见）。
   这不是可以调掉的副作用：**denoise 是采样进度的一部分，"哪里该动"它无从知道**。
@@ -368,7 +364,7 @@ Three things the smoke test (1200×800 base, a 260×260 white square, denoise 0.
 3. 坐标**归一化**，直接 `%d` 打印会全是 0（这个坑很像"检测失败"）；
 4. 有了关节坐标 ⇒ 按关节组取外接框（feet/legs/face/arms/torso）当**部位蒙版的初框**。
 
-已封装成 `tools/pose_keypoints.py`（上传→跑节点→取 history→换算像素→输出部位框，
+已封装成 （上传→跑节点→取 history→换算像素→输出部位框，
 `--mask legs=out.png` 还能直接写出该部位的蒙版 PNG），
 实测：`legs bbox=(309,805,513,1102)`、`face bbox=(300,307,563,361)`、`torso bbox=(243,489,620,806)`。
 **已知空白**：手部/脸部精细关键点在这类图上常缺失（这张图没出手点），必要时用 SAM 按框补分割。
@@ -404,7 +400,7 @@ why naming an invisible thing distorts the result.
 #    串行跑，每个 pass 只碰一个人
 ```
 
-**实测经验（踩过的坑，照做能省几次废图）**
+**四条硬约束（每条都对应一次实际错误）**
 1. **ComfyUI 的 `LoadImage` MASK = 1 − alpha** ⇒ 要重绘的地方 **alpha 必须为 0**。`_rgba.png` 已经按这个约定写好；
    用灰度 `_personN.png` 自己接时，记住 255 = 重绘区。
 2. **别为了"保住某根细绳/某个道具"在掩版里挖洞**：框外的像素本来就不会被重绘，绳的连续性自动保住；
@@ -418,7 +414,7 @@ why naming an invisible thing distorts the result.
 - **角色以 M1 骨架链为准**（一条链 = 一个人）；M2a 的 person 框只用来给链配 `person_id` 和置信度过滤。
   实测同一张图 M2a 会给出 3 个框（0.90 / 0.44 / 0.31，后两个是重叠伪框），而 M1 的两条链才是真正的两个角色。
 - **没有骨架支撑的 person 框不出掩版**（默认；`--allow-box-only-persons` 可强制，整张图一条链都没有时也会自动放行）。
-  这条是用户复核后加的：餐厅那张图里 `prob=0.31` 的伪框正好覆盖**左侧整面墙**，给它出掩版就是**纯错标**。
+  判据实例：`prob=0.31` 的伪框正好覆盖**左侧整面墙**，给它出掩版就是**纯错标**。
   被丢掉的框与原因都写在 `person_boxes_dropped`（`low_prob` / `nested_in_other` / `no_skeleton`），
   每个产出的掩版还带 `supported_by_pose`（有没有骨架证据）。
 - **`pose_coverage` < 0.7 就该人工看一眼**（该角色的可见关键点有多少落在掩版里）；掩版完全错时它会很低。
@@ -430,7 +426,6 @@ why naming an invisible thing distorts the result.
 - **头一定在掩版里，但不鼓成"光环"**：M1 的关键点凸包只包住"鼻/眼/耳"那一小块，盖不到头骨与头发 ⇒ 掩版显式
   并入该角色头部的椭圆；椭圆优先按 **M2b 的 face 框**（比 M2a 的 head 框紧）算，并与该角色自己的轮廓求交，
   否则两人靠一起时两圈"头光环"交叉，看起来就是一团奇怪的十字。
-- **`pose_coverage` < 0.7 就该人工看一眼**（该角色的可见关键点有多少落在掩版里）；掩版完全错时它会很低。
 - **覆盖策略（`--person-mask-cover`，默认 `auto`）**：**宁可多盖**。
   理由：用这套流程的基本都是 agent，做的是**中等/大尺寸特征**的重绘；"只改了一半个人、接缝卡在躯干上"
   比"多盖一点（含骨架之间的空隙，甚至蹭到一点道具）"糟得多；**细小特征本来就不指望 agent 做，人工来**。

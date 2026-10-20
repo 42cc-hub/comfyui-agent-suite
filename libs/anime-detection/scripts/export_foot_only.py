@@ -34,9 +34,22 @@ def link_or_copy(src, dst):
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument('--cls', default='foot', choices=['foot', 'hand'])
+    ap.add_argument('--no-clean', action='store_true',
+                    help='保留目标目录里的旧文件。**默认会先清空**：源数据集重建后，上一版导出的文件'
+                         '不再满足条件（无该类/换了划分），留在目录里就是"旧标签混新标签"（2026-10-14 实测踩到）')
     a = ap.parse_args()
     idx = CLASSES.index(a.cls)
     out_dir = os.path.join(DATA, 'ds_' + a.cls)
+    if not a.no_clean and os.path.isdir(out_dir):
+        for sub in ('train', 'val'):
+            for kind in ('images', 'labels'):
+                d = os.path.join(out_dir, kind, sub)
+                if os.path.isdir(d):
+                    for fn in os.listdir(d):
+                        try:
+                            os.remove(os.path.join(d, fn))
+                        except OSError:
+                            pass
     n = {'train': 0, 'val': 0, 'boxes': 0, 'skip': 0}
     for sub in ('train', 'val'):
         os.makedirs(os.path.join(out_dir, 'images', sub), exist_ok=True)

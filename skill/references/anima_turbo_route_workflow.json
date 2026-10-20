@@ -1,0 +1,107 @@
+{
+  "1": {
+    "class_type": "LoadImage",
+    "inputs": {
+      "image": "dsh_edit/turbo_draft.png"
+    }
+  },
+  "2": {
+    "class_type": "UpscaleModelLoader",
+    "inputs": {
+      "model_name": "4x-AnimeSharp.pth"
+    }
+  },
+  "3": {
+    "class_type": "ImageUpscaleWithModel",
+    "inputs": {
+      "upscale_model": ["2", 0],
+      "image": ["1", 0]
+    }
+  },
+  "4": {
+    "class_type": "ImageScale",
+    "inputs": {
+      "image": ["3", 0],
+      "upscale_method": "lanczos",
+      "width": 1200,
+      "height": 1800,
+      "crop": "disabled"
+    }
+  },
+  "5": {
+    "class_type": "PreviewImage",
+    "inputs": {
+      "images": ["4", 0]
+    }
+  },
+  "6": {
+    "class_type": "UNETLoader",
+    "inputs": {
+      "unet_name": "waiANIMA_v10Base10.safetensors",
+      "weight_dtype": "default"
+    }
+  },
+  "7": {
+    "class_type": "CLIPLoader",
+    "inputs": {
+      "clip_name": "qwen_3_06b_base.safetensors",
+      "type": "stable_diffusion",
+      "device": "default"
+    }
+  },
+  "8": {
+    "class_type": "VAELoader",
+    "inputs": {
+      "vae_name": "qwen_image_vae.safetensors"
+    }
+  },
+  "9": {
+    "class_type": "CLIPTextEncode",
+    "inputs": {
+      "clip": ["7", 0],
+      "text": "masterpiece, best quality, score_7, safe, 1girl, solo, lumine (genshin impact), genshin impact, blonde hair, short hair, hair flower, golden eyes, glasses, oversized clothes, baggy sweater, loose loungewear, off-shoulder sweater, shorts, bare legs, bare feet, sitting, crossed legs, leaning back, wooden chair, left hand holding coffee cup, right hand holding newspaper, reading newspaper, looking at newspaper, living room, indoors, warm sunlight from window, plants, full body"
+    }
+  },
+  "10": {
+    "class_type": "CLIPTextEncode",
+    "inputs": {
+      "clip": ["7", 0],
+      "text": "worst quality, low quality, score_1, score_2, score_3, artist name, blurry, jpeg artifacts, chromatic aberration, extra limbs, bad hands"
+    }
+  },
+  "11": {
+    "class_type": "VAEEncode",
+    "inputs": {
+      "pixels": ["4", 0],
+      "vae": ["8", 0]
+    }
+  },
+  "12": {
+    "class_type": "KSampler",
+    "inputs": {
+      "model": ["6", 0],
+      "positive": ["9", 0],
+      "negative": ["10", 0],
+      "latent_image": ["11", 0],
+      "seed": 424242,
+      "steps": 25,
+      "cfg": 5.0,
+      "sampler_name": "er_sde",
+      "scheduler": "simple",
+      "denoise": 0.35
+    }
+  },
+  "13": {
+    "class_type": "VAEDecode",
+    "inputs": {
+      "samples": ["12", 0],
+      "vae": ["8", 0]
+    }
+  },
+  "14": {
+    "class_type": "PreviewImage",
+    "inputs": {
+      "images": ["13", 0]
+    }
+  }
+}

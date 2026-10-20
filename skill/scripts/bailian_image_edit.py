@@ -20,8 +20,9 @@ Two facts that decide how this is used for matting:
     IoU 0.586, and the figure's scale drifted enough to cost 9.3% of the frame in
     over-inclusion against a hand-cut ground truth.
 
-The API key is not hard-coded in this script: it reads the key from $DASHSCOPE_API_KEY (or skill/config/keys.json); the repo ships no key
-(same folder, written for this host), or --key-file, or $DASHSCOPE_API_KEY.
+The API key is not in this skill tree. Resolution order: --key-file, then
+$DASHSCOPE_API_KEY, then $BAILIAN_KEY_PATH, then ~/.dsh/secrets/config/keys.json,
+then a legacy key json sitting next to this script (kept so older callers still work).
 
 usage:
   python bailian_image_edit.py list
@@ -47,22 +48,26 @@ OPENAI = "https://dashscope.aliyuncs.com/compatible-mode/v1"
 CTX = ssl.create_default_context()
 
 
+SECRETS_KEY = os.path.join(os.path.expanduser("~"), ".dsh", "secrets", "config/keys.json")
+LEGACY_KEY = os.path.join(os.path.dirname(os.path.abspath(__file__)), "config/keys.json")
+
+
+def _load_key_json(path):
+    cfg = json.load(open(path, encoding="utf-8"))
+    return cfg.get("api_key") or cfg["DASHSCOPE_API_KEY"]
+
+
 def api_key(args) -> str:
-    """key 来源：环境变量 → --key-file → <skill>/config/keys.json（本仓库不带 key）。"""
-    key = os.environ.get("DASHSCOPE_API_KEY")
-    if key:
-        return key
-    here = os.path.dirname(os.path.abspath(__file__))
-    cands = [args.key_file, os.path.join(here, "..", "config", "keys.json"),
-             os.path.join(here, "config", "keys.json")]
-    for c in cands:
-        if c and os.path.exists(c):
-            cfg = json.load(open(c, encoding="utf-8"))
-            k = cfg.get("api_key") or cfg.get("DASHSCOPE_API_KEY")
-            if k:
-                return k
-    raise SystemExit("没有 DASHSCOPE_API_KEY：设同名环境变量，或在 skill/config/keys.json 里写 "
-                     "{\"DASHSCOPE_API_KEY\": \"sk-...\"}（该文件已在 .gitignore 里）")
+    # 顺序：显式 --key-file → $BAILIAN_KEY_PATH → $DASHSCOPE_API_KEY → 新默认位置 → 旧位置
+    if args.key_file:
+        return _load_key_json(args.key_file)
+    env_key = os.environ.get("DASHSCOPE_API_KEY")
+    if env_key:
+        return env_key
+    for p in (os.environ.get("BAILIAN_KEY_PATH"), SECRETS_KEY, LEGACY_KEY):
+        if p and os.path.exists(p):
+            return _load_key_json(p)
+    raise SystemExit("no key: --key-file / $BAILIAN_KEY_PATH / $DASHSCOPE_API_KEY / %s" % SECRETS_KEY)
 
 
 def call(url, key, payload=None, headers=None, method=None, timeout=180, raw=None, content_type=None):
@@ -180,7 +185,7 @@ def main() -> None:
     ap.add_argument("cmd", choices=("list", "upload", "edit"))
     ap.add_argument("args", nargs="*")
     ap.add_argument("--key-file", default=None,
-                    help="放 key 的 JSON；默认依次看环境变量 DASHSCOPE_API_KEY、skill/config/keys.json")
+                    help="密钥 JSON；缺省按 $BAILIAN_KEY_PATH → ~/.dsh/secrets/config/keys.json 回退")
     ap.add_argument("--model", default="qwen-image-edit-max")
     ap.add_argument("--negative", default=None)
     ap.add_argument("--ref", action="append", default=[],

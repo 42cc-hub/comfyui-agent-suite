@@ -37,7 +37,11 @@ def main():
                          '缩放与平移调小；`default` = ultralytics 默认（mosaic=1.0, erasing=0.4, scale=0.5…）')
     for _k, _t in (('mosaic', float), ('close_mosaic', int), ('scale', float), ('translate', float),
                    ('degrees', float), ('fliplr', float), ('flipud', float), ('erasing', float),
-                   ('mixup', float)):
+                   ('mixup', float),
+                   # 微调用（2026-10-14 加）：从已训好的权重做"修一处"的微调时，**默认 lr0=0.01 太猛**，
+                   # 会把旧权重整体推走（实测：val 全面掉分、最佳轮=epoch 1）。微调建议 lr0 5e-4 ~ 1e-4，
+                   # 或者 freeze 前 N 层只训 head。
+                   ('lr0', float), ('lrf', float), ('warmup_epochs', float), ('freeze', int)):
         ap.add_argument('--%s' % _k.replace('_', '-'), dest=_k, type=_t, default=None,
                         help='覆盖增强预设（不填则用预设值）')
     a = ap.parse_args()

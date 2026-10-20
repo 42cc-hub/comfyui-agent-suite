@@ -220,7 +220,7 @@ dragging its luminance to the wall turns white paper into an old scroll and make
   **Suggested order: classical match → masked low-denoise repaint → classical match again** (the last pass
   re-fixes the grain/sharpness the model changed).
 - **Structural mistakes** (wrong perspective, wrong occlusion, wrong contact) — no harmonizer fixes those; see
-  `planning_and_decomposition.md` (macro vs micro).
+  `（未随仓库发布的内部文档）` (macro vs micro).
 
 ## 5. Anime-specific notes (our house style)
 
@@ -237,45 +237,34 @@ dragging its luminance to the wall turns white paper into an old scroll and make
   feather the outer frame edge** — UI is meant to sit on top crisply; only the *illustration-facing* inner edges
   (e.g. a translucent panel) need softening.
 
-## 6. External review — proposed upgrades
+## 6. 后续升级方向（提案，未实现——不是规则）
 
-Input: this pipeline, the measured numbers (seam 60.2 → 25.4, histogram worse at 54.2), and four questions.
-Verdict in one line: **the remaining "pasted" feeling is not a colour problem any more — it is
-*painting language*, *lighting*, *edge style* and *layer topology*; keep tuning LAB/σ/Laplacian and returns fall off.**
+**判据**：剩余"贴片感"已经不是颜色问题，而是 paint language / lighting / edge style / layer topology；
+继续调 LAB/σ/Laplacian 收益递减。优先级：painting language → 局部光照 → 边缘轮廓 → 图层关系 →
+统计匹配 → 全局噪声锐度。
 
-**Priority order** (higher first): reconstruction of the **painting language** → **local lighting** →
-**edges/contours** → **layer relations** → statistical harmonization → global noise/sharpness.
+S 档（收益最高、成本最低）：统一主光方向与色温 · value-band 匹配（把周围 L 聚成 3–5 档，
+KMeans k=4，用**分段 LUT** 重映射而不是 `aL+b`）· 边缘语言重建（α 缝与边缘处理分开；
+cel 图上**不要**羽化 2–3 px）。
 
-### The upgrades, with parameters
+其余参数（提案值，未在本机验证）：
 
-| # | Upgrade | How | Numbers |
-|---|---|---|---|
-| 1 | **Value-band (colour-step) matching — not mean/σ** | cluster the surrounding L into 3–5 bands (KMeans k=4 ⇒ shadow/midtone/base/light), then remap the patch with a **piecewise LUT** instead of `aL+b` | e.g. 0→0.02, .25→.18, .5→.48, .7→.68, .9→.86, 1→0.93 |
-| 2 | **Edge-language rebuild** | treat α-seam and edge treatment as **two separate things**: extract the contour, then give it the background's edge style (hard / soft / **line art**) | edge width 0.5–1.5 px, opacity 0.3–0.8, blur 0.2–0.7 px; **do not feather 2–3 px on cel art** (it smears) |
-| 3 | **Local colour bleed** | tint only a 1–4 px outer ring with the background's hue | strength 0.05–0.20, edge only |
-| 4 | **Split AO into three** | **contact shadow** (obeys the key light!) + **cast shadow** + **ambient occlusion** | contact w 1–3 px / op 0.15–0.35; cast len 3–15 px / blur 1–5 px; AO r 2–6 px / op 0.08–0.25 |
-| 5 | **Environment-colour field** | blur the background 30–100 px into a low-frequency colour map, add `k · env` to the patch | k = 0.03–0.12 (keep it subtle for anime) |
-| 6 | **Low/high-frequency split** | match **low freq** (colour/lighting) separately from **high freq** (line/texture/grain) so a Blender part's real geometry is not smeared away | — |
-| 7 | **2D relighting, quantized** | pseudo-normal from L gradients (`N = normalize(-∂xL, -∂yL, 1/s)`), then **quantize** `x = dot(N, L)` into light/base/shadow (+ smoothstep) — reads like an animator repainted the light, unlike continuous Lambert | thresholds .65/.15, or .7→1.0 / .2–.7→0.85 / <.2→0.60 |
-| 8 | **Light-direction map / master lighting profile** | one 2D `L(x,y)` (or a YAML profile: azimuth, elevation, temperature, intensity, shadow_strength, shadow_softness) that **every** program element (rope, robot, UI, repairs) consumes | light ×1.08 +hue 5°, shadow ×0.72 −hue 8° |
-| 9 | **Estimate the key light from the character** | mark 2–5 highlight/shadow points on the figure, fit a 2D lighting field, make all inserted elements follow it | — |
+| 项 | 做法 | 参数 |
+|---|---|---|
+| AO 拆三种 | contact（**服从主光**）+ cast + AO | contact 宽 1–3 px / 不透明度 0.15–0.35；cast 长 3–15 px / 模糊 1–5 px；AO r 2–6 px / 0.08–0.25 |
+| 环境色场 | 背景模糊 30–100 px 成低频色图，`k·env` 加到 patch | k = 0.03–0.12（二次元要克制） |
+| 伪法线 2D 重打光 | `N = normalize(-∂xL, -∂yL, 1/s)`，量化 `dot(N,L)` 成 light/base/shadow | 阈值 .65/.15，或 .7→1.0 / .2–.7→0.85 / <.2→0.60 |
+| 主光图 | 一张 `L(x,y)`（或 YAML：azimuth / elevation / temperature / intensity / shadow_strength / shadow_softness）供**所有**程序元素共用 | 光 ×1.08 +色相 5°，影 ×0.72 −色相 8° |
 
-### Learned harmonizers — what to use
+**硬约束**：harmonizer 不得改变 mask 内部结构（螺丝/齿轮/连接必须存活）。
 
-- *Harmonizing Attention* (WACV 2025) is **texture-aware geometry transfer**, not foreground/background image
-  harmonization.
-- The right family: **FreePIH** (ACM MM 2024, *training-free painterly image harmonization*) and **TF-GPH**
-  (AAAI 2025, *training-and-prompt-free general painterly harmonization*, official repo, **SD2.x, ~20–23 GB VRAM**
-  ⇒ not runnable on this 6 GB laptop). Their benchmarks are "painting + photographic object",
-  which is **not** our target ("looks like *this* anime illustration"), so they may not beat the deterministic route.
-- **Cheapest thing to actually try: PIH** (Adobe, CVPR 2023, semi-supervised parametric harmonization) —
-  there is a **ComfyUI-PIH** custom node: `Background + Foreground + Mask → harmonize`, strength adjustable.
-- Suggested experiment matrix: `A` raw composite / `B` our classical pipeline / `C` FreePIH / `D` TF-GPH /
-  `E` classical+FreePIH / `F` classical+TF-GPH, judged by **edge seam, low-frequency colour error, edge energy,
-  human preference and identity preservation** — and with the hard constraint that **a harmonizer must not alter
-  the structure inside the mask** (screws/gears/connections must survive).
-- Conclusion: prefer **deterministic harmonization + optional learned harmonization** over "a learned
-  harmonizer does everything".
+**学习型 harmonizer 的现状**：FreePIH（ACM MM 2024）、TF-GPH（AAAI 2025）的 benchmark 是
+「油画 + 照片物体」，且 **SD2.x、约 20–23 GB 显存 ⇒ 本机 6 GB 跑不了**；Harmonizing Attention（WACV 2025）
+是 texture-aware geometry transfer，不是 FG/BG harmonization。最便宜可试的是 **PIH**（Adobe CVPR 2023）——
+有 **ComfyUI-PIH** 节点：`Background + Foreground + Mask → harmonize`，强度可调。
+A/B 对照指标：edge seam / 低频色差 / 边缘能量 / 人评 / 身份保持。
+
+倾向：**确定性 harmonization + 可选的 learned 补一刀**，不要指望"一个学习模型全包"。
 
 ### Recommended pipeline order (harmonizer last, not central)
 
@@ -294,27 +283,13 @@ master lighting profile
   → human check
 ```
 
-### Benefit / cost ranking
+**收益排序（按改动量）**：统一主光方向与色温、value-band 匹配、边缘语言重建属"成本低、收益大"一档；
+AO 拆分、环境色场、高低频分离、伪法线重打光次之；学习型 harmonizer 再次；
+历史直方图匹配已实测变差（54.2 vs 25.4），不要再试。
 
-| tier | change | benefit | cost |
-|---|---|---|---|
-| S | unified key-light direction & colour temperature | ★★★★★ | very low |
-| S | value-band / shading-structure matching | ★★★★★ | low |
-| S | edge-language rebuild | ★★★★★ | low |
-| A | split contact + cast shadow | ★★★★☆ | low |
-| A | environment-colour field | ★★★★☆ | low |
-| A | low/high-frequency split | ★★★★☆ | medium |
-| A | pseudo-normal 2D relighting | ★★★★☆ | medium |
-| B | PIH (ComfyUI node) / FreePIH / TF-GPH | ★★★☆☆–★★★★☆ | very low / medium |
-| C | Diff-Harmonization | ★★☆☆☆ | high |
-| C | histogram matching | ★☆☆☆☆ | already measured as worse |
-
-**Closing point**: "pasted" decomposes into four independent problems — **geometry** not of this
-world (topology/perspective/contact), **light** not of this world (master lighting/relighting/shadows),
-**painting language** not of this world (edge/value bands/palette/frequency), **material** not of this world
-(texture/highlight/micro-detail). The classical pipeline above only touches the last third; the next real
-investment is a **unified painting-language + lighting language** pass (i.e. our own *anime composite harmonizer*
-taking FG + BG + mask + lighting profile).
+**收口**：「贴片感」拆成四个独立问题——**几何**不对（拓扑/透视/接触）、**光**不对（主光/重打光/阴影）、
+**绘画语言**不对（边缘/色阶/调色/频率）、**材质**不对（纹理/高光/微观细节）。上面的确定性管线只碰到最后一项，
+真正该投的是统一的「绘画语言 + 光照语言」pass。
 
 ## 7. Open items
 

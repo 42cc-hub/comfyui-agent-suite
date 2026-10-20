@@ -1,6 +1,6 @@
 {
   "schema": 1,
-  "note": "权重不打进仓库，走 Release 下载：python skill/scripts/fetch_weights.py --from-release 42cc-hub/comfyui-agent-suite@weights-v2",
+  "note": "权重不打进仓库，走 Release 下载：python skill/scripts/fetch_weights.py --from-release 42cc-hub/comfyui-agent-suite@weights-v1,weights-v2,weights-v3",
   "weights": [
     {
       "name": "m2b_face4_v3_rot60_s20261013",
@@ -201,6 +201,38 @@
       "dest": "data/masks/rope/weights",
       "size": 45959643,
       "sha256": "22c6bb8b38474c534a626cdf006bce592163cc31a3dcedb36e240fa6e0165dcf"
+    },
+    {
+      "name": "m2a_det_fix_v2",
+      "task": "m2a_det",
+      "desc": "人/手/脚/头框检测：修框增量数据重训，locate.py DEF_DET 的替换候选（未改默认）",
+      "config": "imgsz 960 · 修框增量集（手/脚框重画 224 条）",
+      "metrics": {
+        "留出_40图45条_综合IoU>=0.5": "0.373 → 0.695",
+        "留出_脚_median": "0.000 → 0.604",
+        "留出_手_median": "0.701 → 0.740",
+        "留出_误报": "0/9",
+        "旧口径_val_mAP50-95": "0.8613 → 0.8471（勿与留出口径混用）",
+        "复现": "docs/m2a_boxfix.md"
+      },
+      "file": "m2a_det_fix_v2.best.pt",
+      "size": 5485338,
+      "sha256": "923be9f00d24c637d8c7d38e885557866f971d8f890352b4e23e538c1cc90f2b"
+    },
+    {
+      "name": "m2a_hand_v3",
+      "task": "m2a_hand",
+      "desc": "手部专用检测：locate.py --hand-weights 的候选（默认 None，不启用）",
+      "config": "imgsz 960 · 手框修正后重训",
+      "metrics": {
+        "留出_手_median_IoU": "0.633 → 0.810",
+        "留出_误报": "1/9",
+        "旧口径_val_mAP50": "0.8870 → 0.8757",
+        "复现": "docs/m2a_boxfix.md"
+      },
+      "file": "m2a_hand_v3.best.pt",
+      "size": 5477658,
+      "sha256": "6bc9613ef5c08185e5dcdbb1bd61ad8d724082b958d6244dab42469435dae85c"
     }
   ]
 }

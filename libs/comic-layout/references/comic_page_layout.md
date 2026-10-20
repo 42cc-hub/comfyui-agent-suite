@@ -78,11 +78,9 @@ constraint on the blank cell, not a penalty.
 
 ### Distinguish "lazy" from "infeasible" with a probe
 
-The optimiser left 13.8% blank against an 8% target. Before rewriting the objective, raise
-the blank penalty ~700x and re-run: **it reached 7.7%**, so a near-gapless layout existed and
-13.8% was a *trade* the search had chosen, costing only ~0.4 energy. The hypothesis "the
-constraints make it infeasible" was wrong, and reworking the reading-order rule would have
-been wasted work.
+Measured: an 8% blank target, 13.8% left by the search; raising the blank penalty ~700x reached
+7.7%, costing only ~0.4 energy ⇒ a near-gapless layout existed and 13.8% was a *trade*, not an
+infeasibility.
 
 **Do this probe before changing a constraint.** "I think it is impossible" is a claim to
 falsify, not to act on.
@@ -155,10 +153,10 @@ just above the anchor) rather than a fixed start, so the search can trade it aga
 containment and key coverage instead of being pinned.
 
 With anchors, **order needs no rule at all**: the balloons sit where the characters are, and
-the characters are already in reading order. The global "balloon tops must not decrease"
-rule that this replaced was in permanent conflict with the geometry — a tall cell's balloon
-lands below the next panel's entire cell, so tightening it made that panel impossible and
-loosening it let captions invert. **No amount of tuning fixes a rule that fights the layout.**
+the characters are already in reading order. A global "balloon tops must not decrease" rule
+is in permanent conflict with the geometry — a tall cell's balloon
+lands below the next panel's entire cell, so tightening it makes that panel impossible and
+loosening it lets captions invert. **No amount of tuning fixes a rule that fights the layout.**
 
 Supply anchors from a human, and label the drawn text with no speaker name — the position
 already carries that, and the name only makes every balloon wider.
@@ -182,56 +180,14 @@ machine does the coordinate mapping, the solving and the rendering.**
 
 ## Process note
 
-The layout was built through ~10 numbered revisions, and most of the bugs came from the
-**patch scripts used to apply the changes**, not from the algorithm:
+Most bugs in this pipeline came from the **patch scripts used to apply the changes**, not from
+the algorithm:
 
 * `str.replace` and slice concatenation **fail silently**. A patch that changed nothing still
   compiles and still prints "patched".
 * A slice with `START`/`END` taken from two `index()` calls that are in the **wrong order**
-  re-appends the region it meant to delete. The result defined the NEW renderer first and the
-  OLD one second, and Python takes the last definition — the fix was live in the file and
-  dead in the program, and the "no visible change" was reported as a rendering result.
-* **Assert every substitution.** The one patch that did (`assert old in t`) succeeded first try.
+  re-appends the region it meant to delete; if the file then holds two definitions, Python
+  takes the last one — the fix is live in the file and dead in the program.
+* **Assert every substitution** (`assert old in t`).
 
 Verify a patch by its effect, never by its exit status.
-
-
----
-
-## Comic page — tiling N panels into one page（自入口 SKILL.md 搬入 2026-10-13）
-
-> 来源：`SKILL.md` 的同名章节，2026-10-13 入口瘦身时**整段**搬来，正文未改（只调了标题层级与交叉引用）。
-
-
-When the deliverable is a **page** rather than separate images: one image, N cells, straight
-or slanted dividers, no white margin inside any cell, key content always visible, reading
-order preserved. Two scripts:
-
-| Script | Role |
-|---|---|
-| `libs/comic-layout/scripts/comic_layout.py` | layout search + renderer. `comic_layout.py OUT.png IMG... --page 1400x3200 --beam 12 --weights 1,0.6,1,0.6,1,1,1` |
-| `libs/comic-layout/scripts/letter_page.py` | balloon shapes, text-box search, anchor solving (imports `comic_layout`) |
-
-Design in one line: **recursively cut one convex cell with one straight line** — arbitrary
-angles become legal, the union stays exactly the page, and because a cut hands range
-`[lo..k]` to one side and `[k+1..hi]` to the other, reading order is structural. Each cell is
-then filled with a `cover`-scale crop of its image (so it can never letterbox) slid to keep
-that image's **key region** inside.
-
-Full playbook — the objective terms, the two ways of getting reading order wrong (pairwise
-ordering, and banding by vertical overlap), the blank-area probe, and the balloon geometry:
-**`references/comic_page_layout.md`**.
-
-Three things worth knowing before starting:
-
-- **Ask the human for two annotations, not one.** Key regions *and* balloon anchors are
-  semantic judgements — for a panel holding two people, tile statistics cannot say which is
-  which. `human_canvas` with a labelled contact sheet (or pre-seeded nodes the human only
-  drags) makes this cheap.
-- **Probe before changing a constraint.** The search left 13.8% blank against an 8% target;
-  raising the penalty 700x reached 7.7%, so it was a trade, not an infeasibility. Reworking
-  the constraints would have been wasted work.
-- **Every objective term is a normalised ratio**, so energy is comparable across page sizes
-  and sweeping them is meaningful — on a 7-panel set a 1:2.29 strip scored 8.26 against
-  14.95 for the next best, because portrait panels stack naturally on a tall page.
-

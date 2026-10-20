@@ -164,7 +164,7 @@ layout and props survive (its shopping basket, its framing), so it proves only t
 + 0.6 repaint" is a strong finisher. Use it as the **last** step, after the layout is settled, and
 do not mistake it for recovery.
 
-## 8. Toolchain (all under `agent_work\pixiv_publishing\experiments\bg_control\`)
+## 8. Toolchain (all under （我们的实验）)
 
 | script | role |
 |---|---|
@@ -194,60 +194,3 @@ Everything renders through `PreviewImage` (`type=temp`), so nothing lands in `ou
 7. Pair the control model with its family (Anima: scribble/pose/inpaint; depth → Illustrious).
 8. **Before compositing a character, match the scales** with the anchor arithmetic; print the factor.
 9. Finish with one whole-image img2img at 0.6 if the stages need unifying.
-
-
----
-
-## Recovering perspective — a human's line annotation → camera → control maps
-
-
-
-Full playbook, measured numbers and the toolchain: **`references/perspective_and_scene_geometry.md`**.
-The shape of it, in the order that matters:
-
-- **Agree the axes first.** image: x right / y down / z into the screen (`u = cx + f·X/Z`); world:
-  x forward / y left / z up (ROS); `p_cam = R(p_world − C)`; families `x`=depth, `y`=across,
-  `z`=vertical. Parameterise the rotation as a **rotation vector on a fixed baseline `R0`**, never
-  as free Euler angles (they let an optimiser report `pitch = −424°` and call it a fit).
-- **The human labels each line with its family — that is what makes a hard constraint safe.**
-  Human lines: plain L2, weight 1. Machine-detected lines: Cauchy via IRLS, dropped above ~5–12°.
-  A Cauchy loss on *human* lines lets the optimiser abandon one for free (a 220 px labelled
-  line can park at a 37° residual at cost ≈ 0); and priors must weigh like a line, or f drifts to
-  the bound to buy a marginally better line fit (f = 285 px, h-fov 122°).
-- **Residual** = angle between the line and the direction from its midpoint to that family's
-  projected VP. Guard the **VP-at-infinity** case (direction ⊥ optical axis) explicitly, or the
-  division by ~0 poisons the whole solve.
-- **Report observability, not just a camera**: rank + null direction of the Jacobian, and a **focal
-  sweep**. Measured: a single **wall corner** (3 lines, one per family) fits *exactly* at every
-  focal from 30° to 90° — f completely unobservable, only pitch (≈ +28°) is; **one extra line in any
-  family** pins that VP and makes f observable; two near-parallel lines of one family add almost
-  nothing (their VP is at infinity), so ask for lines that fan out.
-- **Assume the drawing is not a projection, and prove it with numbers.** The case's shelf-edge
-  families imply a 48° down-pitch while the fixture verticals
-  imply ≈ 0°; with 40 detected lines the robust fit still pinned roll/pitch at the parameter bounds
-  with a 12° median residual. When the input is squishy, deliver **largest consistent subset +
-  outlier list + a per-line residual overlay** (green/yellow/red), never a forced camera.
-- **Build the scene as a wall corner** (floor `z=0`, one wall `{y=Y_L}` parallel to the aisle, one
-  `{x=X_R}` perpendicular). Take each wall's offset from the **bottom boundary of the human's paint
-  mask** (ray → floor, median of the world coordinate): 796 samples gave `Y_L=1.94 m`; the occluded
-  wall's number is biased far (12.6 m) and is **the knob**. Lines *above* the floor are not base
-  lines — assuming they lie on `z=0` gave a nonsense 45 m.
-- **Repaint the depth per painted region** from each plane's equation (and fill the character's
-  region with the background behind her); also emit a plane-id colour map — humans judge that far
-  better than grey.
-- **Pair the control model with its family.** Anima has **no depth ControlNet** (only LLLite
-  pose/scribble/inpaint; the depth `.safetensors` in that dropdown is SDXL/NoobAI). Depth →
-  **Illustrious + `noob_sdxl_controlnet_depth.safetensors`** (832×1216, strength ≈0.85, 111 s,
-  visibly better than Anima+scribble here). Control images must match the sampling canvas; stage
-  them in `input/dsh_ctrl/` and pass `dsh_ctrl/<file>` (a bare filename = HTTP 400); `LoadImage`'s
-  MASK is output index 1 and equals **1 − alpha**.
-- **Two-stage compositing must pin ONE scale anchor.** The character's pixel size comes from the
-  human's mask, the background's scale from your geometry — nothing ties them, so a missing anchor
-  gave a **2.30× giant**. Fix: `d` = ray through her feet ∩ floor; `h_expect = f·H_char/d`;
-  `factor = h_expect/h_mask`; zoom the background about her feet (default) or shrink the mask, and
-  **print the factor**.
-- **Finisher**: one whole-image img2img at **denoise 0.6, no ControlNet** (30 s) removed the
-  two-stage seam and unified the lighting. Run on our composite it gave the best image *of our own
-  pipeline*; run on the reference it looked even better but that is the
-  **ceiling, not a reconstruction** — at 0.6 the reference's own layout and props survive.
-

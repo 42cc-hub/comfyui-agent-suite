@@ -57,7 +57,7 @@ scenes.json
    comfy_control.mjs jobs.json ──► ControlNet / LLLite / img2img ──► final PNGs
 ```
 
-## 1. Author the scene — `references/blender_scenes_example.json`
+## 1. Author the scene — `libs/blender-controlnet/references/blender_scenes_example.json`
 
 ### Bones are world-space directions, not Euler angles
 
@@ -126,7 +126,7 @@ out of the 3-phalange bone chains.
 
 **Invariant:** pose_bone.head/tail are ARMATURE-space. Multiply by
 `arm_obj.matrix_world` before projecting, or any scene that sets `root` drifts.
-This bug is silent whenever root is zero — it cost a debugging cycle here.
+This bug is silent whenever root is zero.
 
 `blender_draw_openpose.py` draws the body with the standard 18-color limb palette
 and the hands with the standard 20 edges at half stroke width.
@@ -141,8 +141,7 @@ python libs/blender-controlnet/scripts/blender_crop_hands.py s1        # -> out/
 ```
 
 - `overlay_check` blends the skeleton onto the clay render. Any offset is a
-  projection bug, not a pose difference — this is what exposed the armature-space
-  issue.
+  projection bug, not a pose difference.
 - `crop_hands` crops ±150 px around the wrist keypoints and upscales 3×. Hands
   are ~20 px wide in a full-body 832×1216 frame; at 1:1 you cannot tell a correct
   hand from a broken one.
@@ -150,7 +149,7 @@ python libs/blender-controlnet/scripts/blender_crop_hands.py s1        # -> out/
 ## 4. Generate — `scripts/comfy_control.mjs`
 
 ```bash
-node scripts/comfy_control.mjs references/blender_control_jobs_sdxl.json
+node scripts/comfy_control.mjs libs/blender-controlnet/references/blender_control_jobs_sdxl.json
 ```
 
 Job file: `{pipeline, base|unet/clip/vae, outDir, jobs[]}`. Each job carries
@@ -275,7 +274,7 @@ Control test: the *same* 3D pose rendered from the front and from behind scores
 
 To compare poses across viewpoints, fit both to 3D and compare bone directions
 instead. Worked example on this host: the photo's DWPose pose scored 56.8 % against
-a *back*-camera render of my fitted pose but 87.1 % against a *front*-camera render
+a *back*-camera render of the fitted pose but 87.1 % against a *front*-camera render
 of that same pose — i.e. the back camera is the better viewpoint match, and the
 number itself was never evidence about the pose.
 
@@ -384,13 +383,13 @@ repainted; reduce everything else to an anchor tag:
 Denoise has a sweet spot: at 0.9 the sandbags came back as coiled hay-rolls; 0.8 held
 the shape. Raise it only as far as the deviation demands.
 
-**The prior cannot locate what the model re-invented.** Here the 3D sandbag wall
+**The prior cannot locate what the model re-invented.** A 3D sandbag wall
 projected to the right edge, but the model rendered a large stone wall across the
 upper frame — no 3D mask could cover it. For "the model reinterpreted the scene"
 cases, the human paints the region on the generated image (`human-canvas`,
 `human-canvas`) and the same GrabCut + latent-mask path takes it from there.
 
-## Known pitfalls (each one hit for real)
+## Known pitfalls
 
 1. **Keypoints in armature space** — multiply by `matrix_world` (see above).
 2. **Depth range over the whole scene** — anchor it to the subject.
@@ -430,151 +429,70 @@ cases, the human paints the region on the generated image (`human-canvas`,
 
 ---
 
-## Blender-driven control maps — depth / pose / hands（自入口 SKILL.md 搬入 2026-10-13）
 
-> 来源：`SKILL.md` 的同名章节，2026-10-13 入口瘦身时**整段**搬来，正文未改（只调了标题层级与交叉引用）。
+## Repainting at the right depth, and what a detailer can actually fix
 
-When pose, framing, focal length or foreshortening must be exact, build the scene
-in Blender and render control maps instead of describing it in words. Depth and
-pose maps are projected through the **same camera from the same armature**, so
-they can be stacked without contradicting each other.
+**Pick denoise by WHAT you are changing, not by how wrong it looks.** A band that is too
+high throws away exactly the structure you meant to keep (measured once: "fix the tail's
+scales" at 0.85 came back with the tail detached from her hips and stray fins in the
+water — a band-1 task run at band 4).
 
-**Full workflow, scene-spec format, pitfalls and measured settings:
-`references/blender_control_pipeline.md`.**
+| denoise | the task it is for |
+|---|---|
+| **0.2 – 0.4** | fixing texture and linework |
+| **0.5 – 0.6** | fixing proportions and expressions |
+| **0.7** | large-scale restructuring |
+| **0.8 – 1.0** | discarding the original structure — a fresh roll |
 
-```bash
-# 1. scene -> depth + clay preview + keypoints (--factory-startup is REQUIRED)
-"<你的 Blender 安装目录>\blender.exe" --background --factory-startup \
-    --python libs/blender-controlnet/scripts/blender_build_scene.py -- --spec scenes.json --out out
-# 2. keypoints -> OpenPose skeleton (COCO-18 body + 2x21 hand points)
-python libs/blender-controlnet/scripts/blender_draw_openpose.py out/s1_kps.json out/s1_pose.png
-# 3. verify the skeleton sits on the geometry BEFORE spending GPU time
-python libs/blender-controlnet/scripts/blender_overlay_check.py out/s1_clay.png out/s1_pose.png out/s1_overlay.png
-python libs/blender-controlnet/scripts/blender_crop_hands.py s1        # hands are ~20 px; zoom before judging
-# 4. generate: ControlNet (SDXL) / LLLite (Anima) / img2img from the clay render
-node scripts/comfy_control.mjs references/blender_control_jobs_sdxl.json
+- **Style and colour are prompt-driven, not denoise-driven.** An unchanged prompt keeps the
+  original look at *any* band, so raising denoise to change an element's material or palette
+  just breaks its structure instead. "Make this element look like X while keeping its shape"
+  = band 1–2 **plus a prompt that describes X**.
+- Over a mask, denoise does not control *how much* changes, only whether the structure
+  survives — the masked region is repainted whole at every band
+  (`out = out * mask + latent * (1 - mask)`; see `references/local_repaint_bigcanvas.md`).
 
-# 5. optional: INGEST an existing 2D skeleton instead of authoring a pose by hand
-python libs/blender-controlnet/scripts/blender_extract_kps.py ref/skeleton.png ref/target_kps.json --overlay ref/check.png
-"<你的 Blender 安装目录>\blender.exe" --background --factory-startup \
-    --python libs/blender-controlnet/scripts/blender_fit_pose.py -- --target ref/target_kps.json \
-    --spec scenes.json --scene s1 --out scenes_fitted.json
-python libs/blender-controlnet/scripts/blender_pose_error.py ref/target_kps.json out_fitted/fitted_kps.json
+**Detailer family — what decides success is texture problem vs topology problem.**
 
-# 6. multi-character tableau (+ per-character/env silhouette masks, + editable .blend)
-"<你的 Blender 安装目录>\blender.exe" --background --factory-startup \
-    --python libs/blender-controlnet/scripts/blender_stage_multi.py -- --spec scenes_battle.json --out out --masks --save-blend scene.blend
-# 7. human drags camera/characters/props in the Blender GUI, Ctrl+S, then read it back
-"<你的 Blender 安装目录>\blender.exe" --background --python libs/blender-controlnet/scripts/blender_extract_blend.py -- \
-    --blend scene.blend --spec scenes_battle.json --out scenes_from_blend.json
-# 8. local repaint: prior mask -> GrabCut-aligned mask -> latent noise mask
-python libs/blender-controlnet/scripts/blender_make_inpaint_mask.py base.png out/s_mask_keqing.png mask_keqing.png --grow 16 --feather 6
-node scripts/comfy_inpaint.mjs inpaint_jobs.json
-```
+| target | defect type | what works | what does not |
+|---|---|---|---|
+| face | resolution loss (small face, was upscaled) | `denoise 0.35–0.45`: eyelashes, pupil highlights, hair strands appear; in-mask change ~13–14 %, out-mask max delta = **2** | — |
+| face | structure destroyed (smudged) | nothing at this scale — even `0.55` moves only **5 %** of in-mask pixels; `0.7` only guesses at the mouth | low denoise (faithfully reproduces "blurry") |
+| hand | small / soft (skeleton still trustworthy) | hand skeleton as LLLite, low denoise | — |
+| hand | fingers fused / six fingers (skeleton itself wrong) | nothing reliable: `0.45–0.92` moves ~23–30 % of pixels but the **detail energy goes DOWN** (it smooths, not rebuilds); `1.00` finally separates the fingers **and** grows a new hand beside her face | LLLite on the bad skeleton (it anchors the error); mid denoise (looks changed, is only blurring) |
 
-Key facts:
-- Poses are authored as **world-space bone directions** in `scenes.json`; hands as
-  `{"L": {"curl": 0..1, "spread": 0..1}}`. Fingers are real bones (15/hand), so the
-  mesh, depth map and OpenPose hand skeleton share one pose.
-- **Multi-character** staging is `blender_stage_multi.py` (§6):
-  N armatures, props parented to bones, per-character keypoints, and `--masks`
-  silhouettes. Hand the `.blend` to the human when hand-authored poses still read
-  wrong; `blender_extract_blend.py` reads the GUI edits back (round-trip fidelity
-  measured at max 27/255, mean 0.019). Mesh-level edits (subdivide/join) do NOT
-  survive — only object transforms do.
-- **Local repaint** beats re-rolling a whole image when one element is wrong
-  (§8): Blender silhouette → GrabCut aligned on the *generated* image → `VAEEncode`
-  + `SetLatentNoiseMask` + `KSampler(denoise)`. **Simplify the prompt outside the
-  repaint region** (reduce the other character to `1girl at right side`) or the
-  model rewrites them.
-- **Choose denoise by WHAT you are changing, not by how wrong it looks.** The band
-  names the task; a band that is too high throws away exactly the structure you
-  meant to keep. (2026-09-20: "fix the tail's scales" was run at 0.85 and the tail
-  came back detached from her hips with stray fins floating in the water — the task
-  was band 1, the pass was band 4.)
+1. **Never measure a repaint by "how many pixels changed".** Read the *direction*: a
+   smoothing pass gives a large in-mask change with **negative** detail energy. Pair
+   `changed_pct_inside_mask` with a Laplacian-energy delta.
+2. **A repaint has no placement constraint.** It can fix local topology but cannot know
+   *where* the hand should go; supplying a corrected skeleton or dense map is the
+   precondition for high denoise, not an optional extra.
+3. **Paste-back cleanliness is cheap to prove**: out-mask max delta ~2 means the feathering
+   is fine and any remaining artifact is inside the mask. Report it with every repair.
 
-  | denoise | the task it is for |
-  |---|---|
-  | **0.2 – 0.4** | fixing texture and linework |
-  | **0.5 – 0.6** | fixing proportions and expressions |
-  | **0.7** | large-scale restructuring |
-  | **0.8 – 1.0** | discarding the original structure — a fresh roll |
+**Character replacement without a face-swap model** — `agent_work/experiments/dance_pose_odette/swapchar.py`:
+HED edge map → `ControlNetApplyAdvanced` (softedge_hed, 0.9) + **grayscale** base at img2img
+`denoise 0.8` + character LoRA 0.85 keeps pose / rope topology / framing and swaps identity,
+hair and outfit. Prove it is the LoRA and not a re-roll by running the **same seed with the
+original character's LoRA** as a control — the control must reproduce the original character.
 
-  Two consequences that are easy to get wrong:
+**True identity transfer needs FaceID, and FaceID needs weight sets that are NOT on this
+host.** `ip-adapter-plus-face_sdxl_vit-h` is a CLIP-vision image prompt: it changes face and
+eye shape but does **not** carry the reference's hair or iris colour, and at `weight 1.0` it
+destroys the image (severe colour cast, features dissolve) with or without a character LoRA —
+the usable band is ~0.5 and it still is not identity. `FACEID PLUS V2` on SDXL needs **all
+three** of: `ip-adapter-faceid-plusv2_sdxl.safetensors` (matched by regex
+`faceid.plusv2.sdxl.(safetensors|bin)` in
+`comfyui_ipadapter_plus/utils.py::get_ipadapter_file` — a FaceID **LoRA alone is not
+enough**), `ip-adapter-faceid-plusv2_sdxl_lora.safetensors`, and an `insightface` pack with
+`det_10g.onnx` + `w600k_r50.onnx`. Missing the first fails as
+`Exception("IPAdapter model not found.")` at `IPAdapterUnifiedLoaderFaceID`, which is easy to
+misread as an insightface problem. For the objective ArcFace metric a **minimal pack**
+(`buffalo_l_min/` holding only `det_10g` + `w600k_r50`, see
+`agent_work/experiments/dance_pose_odette/verify_arcface.py`) is sufficient — it skips the
+143 MB `1k3d68`, and `FaceAnalysis` must be pointed at that dir because it loads **every**
+onnx it finds there.
 
-  - **Style and colour are prompt-driven, not denoise-driven.** Keeping the prompt
-    unchanged keeps the original look at *any* band, so raising denoise to change
-    an element's material or palette just breaks its structure instead. "Make this
-    element look like X while keeping its shape" = band 1–2 **plus a prompt that
-    describes X**.
-  - Over a mask, denoise does not control *how much* changes, only whether the
-    structure survives — the masked region is repainted whole at every band
-    (`out = out * mask + latent * (1 - mask)`; see `local_repaint_bigcanvas.md`).
-- **Repairing hands / faces (the "detailer" family) — measured boundaries (2026-10-03).**
-  The community recipe is always *locate → crop → upscale ×2 → feathered mask → low-denoise
-  repaint → paste back*; what decides success is **whether the defect is a texture problem or
-  a topology problem**:
-
-  | target | defect type | what works | what does not |
-  |---|---|---|---|
-  | face | **resolution loss** (small face, was upscaled) | `denoise 0.35–0.45` — eyelashes, pupil highlights, hair strands appear; in-mask change ≈ 13–14 %, out-mask max Δ = **2** | — |
-  | face | **structure destroyed** (smudged/smeared) | nothing at this scale — even `0.55` moves only **5 %** of in-mask pixels; `0.7` only guesses at the mouth | low denoise (it faithfully reproduces "blurry") |
-  | hand | small / soft (skeleton still trustworthy) | hand-skeleton as LLLite, low denoise | — |
-  | hand | **fingers fused / six fingers** (skeleton itself wrong) | nothing reliable: `0.45–0.92` moves ≈ 23–30 % of pixels but the **detail energy goes DOWN** (it smooths, not rebuilds); `1.00` finally separates the fingers cleanly **and** grows a new hand beside her face | LLLite on the bad skeleton (it anchors the error); mid denoise (looks like it changed, is only blurring) |
-
-  Three rules that follow:
-  1. **Never measure a repaint by "how many pixels changed".** Read the *direction*: a
-     smoothing pass gives a large in-mask change with **negative** detail energy. Pair
-     `changed_pct_inside_mask` with a Laplacian-energy delta.
-  2. **A repaint has no placement constraint.** It can fix local topology but cannot know
-     *where* the hand should go; supplying a corrected skeleton/dense map is the precondition
-     for high denoise, not an optional extra.
-  3. **Paste-back cleanliness is cheap to prove**: out-mask max Δ ≈ 2 means the feathering is
-     fine and any remaining artifact is inside the mask. Report it with every repair.
-- **Character replacement without a face-swap model** (`swapchar.py`): HED edge map →
-  `ControlNetApplyAdvanced` (softedge_hed, 0.9) + **grayscale** base at img2img `denoise 0.8`
-  + character LoRA 0.85 keeps pose / rope topology / framing and swaps identity, hair and
-  outfit. Prove it is the LoRA and not a re-roll by running the **same seed with the original
-  character's LoRA** as a control — the control must reproduce the original character.
-  (See also `references/cloud_edit_and_merge.md`: never hand the model the original colours if the outfit must change.)
-- **True identity transfer needs FaceID, and FaceID needs two weight sets that are NOT on this
-  host** (checked 2026-10-03). Do not reach for plain IPAdapter and call it identity transfer:
-  `ip-adapter-plus-face_sdxl_vit-h` is a **CLIP-vision image prompt**, so it changes face shape
-  and eye shape but does **not** carry the reference's hair or iris colour, and at
-  `weight 1.0` it destroys the image outright (severe colour cast, features dissolve) with or
-  without a character LoRA — the usable band is ≈0.5 and it still is not identity.
-  `FACEID PLUS V2` on SDXL in turn requires **all three** of:
-  `ip-adapter-faceid-plusv2_sdxl.safetensors` (matched by regex `faceid.plusv2.sdxl.(safetensors|bin)`
-  in `comfyui_ipadapter_plus/utils.py::get_ipadapter_file` — a FaceID **LoRA alone is not enough**),
-  `ip-adapter-faceid-plusv2_sdxl_lora.safetensors`, and an `insightface` pack with
-  `det_10g.onnx` + `w600k_r50.onnx`. Missing the first one fails as
-  `Exception("IPAdapter model not found.")` at `IPAdapterUnifiedLoaderFaceID`, which is easy to
-  misread as an insightface problem.
-  For the objective ArcFace identity metric, a **minimal pack** (`buffalo_l_min/` holding only
-  `det_10g` + `w600k_r50`, see `verify_arcface.py`) is sufficient — it skips the 143 MB `1k3d68`,
-  and `FaceAnalysis` must be pointed at that dir because it loads **every** onnx it finds there.
-- To **copy a pose that already exists as a skeleton image**, use the ingest trio
-  (`blender_extract_kps.py` → `blender_fit_pose.py` → `blender_pose_error.py`).
-  Fitting runs inside Blender so the FK/projection cannot drift from the renderer,
-  and it is fast: **27.0 % → 6.9 % RMS in 11 s** on an arabesque target. The
-  residual floor is the mannequin's fixed proportions, not the pose.
-- To **get a pose out of a photo**, use ComfyUI's own detector —
-  `LoadImage → DWPreprocessor → SavePoseKpsAsJsonFile` — then
-  `blender_dwpose_to_kps.py` to convert the JSON (already COCO-18, no colour
-  extraction needed). DWPose beats `OpenposePreprocessor` on small input; keep the
-  `confidence` field, since low-score joints carry garbage coordinates and both the
-  metric and the fitter drop them below 0.3.
-- **`blender_pose_error.py` is same-view only**: the same 3D pose scores **87 %**
-  against itself across two camera angles. ~5–10 % means a good same-view fit;
-  50–90 % across viewpoints says nothing about the pose.
-- Control models on this host: `noob_sdxl_controlnet_depth.safetensors` (4.66 GB)
-  and `openpose_pre.safetensors` (2.33 GB) on Illustrious;
-  `anima-lllite-pose-1.safetensors` (0.02 GB) on Anima via
-  `AnimaLLLiteApply_sdscripts`.
-- Timings at 832×1216 on 6 GB: depth CN 85–105 s, pose CN 47–70 s, LLLite ~60 s,
-  img2img 41–49 s, depth+pose stacked 160–171 s (weights exceed VRAM; ComfyUI offloads).
-- `comfy_control.mjs` uploads control images to `input/dsh_ctrl` (delete after) and
-  reads results via `PreviewImage`/`type=temp`, so **nothing lands in `output/`**.
-- Hand keypoints fixed "mitten hands" in an A/B at identical seeds — but only
-  because the control model was trained with hands; A/B it, never assume.
-
+**`blender_pose_error.py` is same-view only**: the same 3D pose scores **87 %** against
+itself across two camera angles. ~5–10 % means a good same-view fit; 50–90 % across
+viewpoints says nothing about the pose.
