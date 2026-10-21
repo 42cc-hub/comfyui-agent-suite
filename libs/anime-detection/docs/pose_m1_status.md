@@ -44,14 +44,15 @@ python .runtime/eval_common_subset.py --split val --dump .runtime/eval_report_v6
 
 ## 2. 接入方式
 
-`scripts/locate.py` 新增 `--vitpose-dir`（默认 `models/vitpose_ft_v6_labelbox_honly`）：
+`scripts/locate.py` 新增 `--vitpose-dir`（**2026-10-22 起默认 `models/vitpose_rot_abs`**，HF 目录 343,677,411 B、`model.safetensors` sha `8E98B16C…817C86`、归档自 `runs/m1_pose_rot_abs`；此前的 `models/vitpose_ft_v6_labelbox_honly` 已退役为回滚目标）。**2026-10-22 起默认；回滚=改回 v6 一行**（`DEF_VITPOSE = os.path.join(PROJ, 'models', 'vitpose_ft_v6_labelbox_honly')`）。
 
 * **默认就用它当 M1**；目录不存在或 `--no-vitpose` 时按老路回落 `--pose-weights` → dwpose；
+* 换权重证据（产线框口径、48 图 holdout 四桶）：**PCK 0.506→0.588（p=0.044）**、端点 0.399→0.482、swap 0.560→0.498、链归属 0.775 不变；9 张（6 双人 + 3 横躺）"默认 vs 显式传同一权重"等价性验收 **JSON 逐字段 0 差异**；
 * 它是 top-down，需要 person 框 ⇒ locate.py 把 M2a 的 det 推理提到 M1 之前，**det 只跑一次**，两层共用；
 * 输出契约不变：`body.<COCO17 名>` + `vis∈{0,1,2}` + `chain='M1#i'`，所以骨架掩版、脚召回兜底、
   M3 脚裁图**都不用改**；额外写 `rec['vitpose']` 与 `chain: 'M1.vitpose'` 便于溯源。
 
-超参（见 `models/vitpose_ft_v6_labelbox_honly/meta.json`、`docs/pose_vitpose_arms.md`）：
+超参（现役见 `models/vitpose_rot_abs/meta.json`；下面是 v6 这版的历史配方，见 `models/vitpose_ft_v6_labelbox_honly/meta.json`、`docs/pose_vitpose_arms.md`）：
 188 张人工骨架 / 260 实例 ×5 重复、`--box-src label`（用标签自己的外接框）、rot ±12°、
 颜色抖动 0.10、面部关节权重 3×、lr head 1e-4 / backbone 1e-5、30 epoch（最好的一轮在 2~14）。
 **推理用 M2a 的 person 框**（比标签框更宽，实测更稳）。
@@ -79,3 +80,13 @@ python .runtime/eval_common_subset.py --split val --dump .runtime/eval_report_v6
   下游用点推掩版时要**先裁剪到画布内**并看 `vis`。
 * **手/脚细点不在能力内**：这一层只给 COCO-17 的 17 点；指/趾仍走 M2a+M3。
 * 权重 344MB + 需要 `transformers`；没有 torch/transformers 的环境会静默回落到旧 YOLO-pose。
+
+## 5. 18 点骨架（含 neck）结论：**不上线**（2026-10-22）
+
+试过把 neck 做成第 18 个输出通道（只重建最后一层 conv、neck 通道用双肩通道均值初始化，输入/输出 schema 不变），
+在同一 48 图 holdout 四桶上：**四桶 PCK@0.05 0.694（18 点） vs 0.717（17 点 rot 增广）⇒ −2.2pp，
+符号检验 p=0.0034（48 行 10 赢 / 9 平 / 29 输）**；分桶 0.758/0.709/0.699/0.702 vs 0.754/0.672/0.651/0.704；
+swap 0.413→0.451（更差）、链归属 0.866 不变。
+**结论：不上线**；只有在 ≥40 条人工拖过的 neck、且覆盖 ≥3 个不同人物之后才值得重评
+（当前 GT 里 neck 有 78% 是派生的"双肩中点"，只有 20 条是人工拖的）。报告：`team/reports/m1-dualpose/pose18_neck.md`。
+

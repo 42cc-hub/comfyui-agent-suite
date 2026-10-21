@@ -125,21 +125,30 @@ def pred_instances(rec, min_vis):
     out = []
     for ch, d in by.items():
         pts = []
-        for nm in BODY18:
+        meta = {}
+        for j, nm in enumerate(BODY18):
             p = d.get(nm)
             pts.append((float(p['x']), float(p['y']), int(p.get('vis') or 0)) if p else (0.0, 0.0, 0))
+            mark = {k: p[k] for k in ('src', 'from') if p and p.get(k)}
+            if mark:
+                meta[j] = mark
         n_vis = sum(1 for _x, _y, v in pts if v >= 1)
         if n_vis < min_vis:
             continue
-        out.append({'chain': ch, 'pts': pts, 'n_vis': n_vis})
+        out.append({'chain': ch, 'pts': pts, 'n_vis': n_vis, 'meta': meta})
     out.sort(key=lambda o: -o['n_vis'])
     return out
 
 
 def gt_instances(gt):
-    """读真值 → 实例列表（chain 顺序即人加的顺序）。"""
+    """读真值 → 实例列表（chain 顺序即人加的顺序）。
+
+    `meta[j]` 透传点上的来源标记（`src`/`from`）：派生点（如 neck=双肩中点）必须能被下游认出来，
+    不能被当成模型输出。
+    """
     by = {}
     order = []
+    meta = {}
     for p in gt.get('points') or []:
         if p.get('cls') != 'body':
             continue
@@ -149,18 +158,25 @@ def gt_instances(gt):
             continue
         if ch not in by:
             by[ch] = empty_pts()
+            meta[ch] = {}
             order.append(ch)
         by[ch][IDX[nm]] = (float(p['x']), float(p['y']), int(p.get('vis') or 0))
-    return [{'chain': ch, 'pts': by[ch]} for ch in order]
+        mark = {k: p[k] for k in ('src', 'from') if p.get(k)}
+        if mark:
+            meta[ch][IDX[nm]] = mark
+    return [{'chain': ch, 'pts': by[ch], 'meta': meta.get(ch) or {}} for ch in order]
 
 
 def points_of(instances, layer):
     out = []
     for i, ins in enumerate(instances):
         chain = 'H#%d' % i if layer == 'human' else (ins.get('chain') or 'M#%d' % i)
-        for nm, (x, y, vis) in zip(BODY18, ins['pts']):
-            out.append({'layer': layer, 'cls': 'body', 'name': 'body.%s' % nm, 'chain': chain,
-                        'x': round(float(x), 2), 'y': round(float(y), 2), 'vis': int(vis)})
+        meta = ins.get('meta') or {}
+        for j, (nm, (x, y, vis)) in enumerate(zip(BODY18, ins['pts'])):
+            p = {'layer': layer, 'cls': 'body', 'name': 'body.%s' % nm, 'chain': chain,
+                 'x': round(float(x), 2), 'y': round(float(y), 2), 'vis': int(vis)}
+            p.update(meta.get(j) or {})        # 来源标记透传：派生点不能被误当成模型输出
+            out.append(p)
     return out
 
 
@@ -248,6 +264,16 @@ def build_queue(pred_dir, out_csv, limit=0, sort='stem', seed=1234, min_pred_vis
     print('队列：%d 张 → %s（多人优先=%s，原图缺失 %d 张）'
           % (len(rows), out_csv, sort == 'hard', miss))
     return len(rows)
+
+
+def phantom(x, y, v):
+    """缺失关节的占位值 = vis 0 且坐标恰为 (0,0)。
+
+    `pred_instances()`/`gt_instances()` 对缺失关节填 `(0.0, 0.0, 0)`（第 128-130 行），
+    而 ViTPose 只出 COCO-17（无 `neck`）⇒ 每条链的 neck 都是这种占位点。
+    只跳过"恰好 (0,0) 且 vis=0"的：人按 3 判成"不可见"但坐标有效的点必须照画。
+    """
+    return v == 0 and abs(x) < 1e-9 and abs(y) < 1e-9
 
 
 # ---------------------------------------------------------------- 画布
@@ -457,6 +483,9 @@ class PoseCanvas(QWidget):
                 xb, yb, vb = ins['pts'][IDX[b]]
                 if va == 0 and vb == 0:
                     continue
+                # 一端是缺失关节的占位点 (0,0)：这条边画出来就是一条从人物连到画面左上角的假线
+                if phantom(xa, ya, va) or phantom(xb, yb, vb):
+                    continue
                 pen = QPen(VIS_COLOR[2] if (va >= 1 and vb >= 1) else VIS_COLOR[1], 2 if is_act else 1)
                 if not (va >= 1 and vb >= 1):
                     pen.setStyle(Qt.DashLine)
@@ -476,6 +505,8 @@ class PoseCanvas(QWidget):
         for i, ins in enumerate(self.instances):
             is_act = (i == self.active)
             for j, (x, y, v) in enumerate(ins['pts']):
+                if phantom(x, y, v):            # 缺失关节不画点（GT 里仍是 (0,0,0)，缺就是缺）
+                    continue
                 cx, cy = self.to_canvas(x, y)
                 col = VIS_COLOR.get(v, VIS_COLOR[0])
                 col = QColor(col.red(), col.green(), col.blue(), 255 if is_act else 90)
@@ -635,6 +666,7 @@ class PoseLabeler(QMainWindow):
                 self.rows.append(r)
         self.only_unjudged = only_unjudged
         self.pos = 0
+        self.gt_cache = {}               # stem -> 实例（C 拷贝上一张用；只活在本进程里）
         self.setWindowTitle('M1 骨架校准标注器')
         self.resize(1500, 980)
         # 界面字号整体上调并加粗（用户 2026-10-13：标签看不清）。设在建子控件之前，子控件继承。
@@ -757,6 +789,43 @@ class PoseLabeler(QMainWindow):
         else:
             self.note('撤销：节点改动')
 
+    def copy_prev(self):
+        """C：把**上一张**的真值整份拷进当前图（用户 2026-10-21：差分套图相邻两图几乎一样，想复制再微调）。
+
+        约定：拷完**不翻页**（先看一眼再按空格/Enter 采纳）；判定记 `edit`（不新增 verdict 值，
+        免得下游统计要认第五种）；note 追加 `copy_from=<上一张 stem>` 便于回溯来源。
+        拷贝源优先级：本进程缓存（看过/刚存的）→ pose_gt/<stem>.json → 状态栏提示没有。
+        """
+        if self.pos <= 0:
+            self.note('第 1 张没有"上一张"可拷')
+            return
+        rows = list(csv.DictReader(io.open(self.queue, encoding='utf-8'))) \
+            if not self.rows else self.rows
+        prev_stem = (rows[self.pos - 1].get('stem') or '') if rows else ''
+        src = self.gt_cache.get(prev_stem)
+        if src is None:
+            f = self.gt_path(prev_stem)
+            if os.path.exists(f):
+                src = gt_instances(jload(f))
+        if not src:
+            self.note('上一张（%s）没有标注可拷贝' % prev_stem)
+            return
+        c = self.canvas
+        c.push_undo()                       # 拷贝这一下也进撤销栈：Z 能退回拷贝前的状态
+        c.instances = copy.deepcopy(src)
+        c.active = 0
+        c.sel, c.hover, c.drag = None, None, None
+        c.changed()
+        self.save_row('edit')               # 立刻落盘：判过的图必须显示真值，否则重启后这次拷贝丢了
+        r = self.current_row()
+        if r is not None:
+            note = (r.get('note') or '').strip()
+            r['note'] = (note + ' copy_from=%s' % prev_stem).strip()
+            self.write_queue()
+        self.note('已拷贝上一张 %s 的 %d 个实例（Z 可撤回拷贝，空格采纳并下一张）'
+                  % (prev_stem, len(c.instances)))
+
+
     # ---- 行 ----
     def current_row(self):
         return self.rows[self.pos] if self.rows else None
@@ -797,6 +866,7 @@ class PoseLabeler(QMainWindow):
         if os.path.exists(gt_file):                      # 判过的图永远显示真值，绝不显示预标注
             gt = jload(gt_file)
             self.canvas.instances = gt_instances(gt)
+            self.gt_cache[r['stem']] = copy.deepcopy(self.canvas.instances)
         else:
             self.canvas.instances = copy.deepcopy(pred)
         self.canvas.active = 0
@@ -835,7 +905,7 @@ class PoseLabeler(QMainWindow):
         self.status.setText(
             '第 %s/%d 张 %s · %s%s · 预标注%s个（%s）· 判定=%s · %s%s\n'
             '键位都写在按钮上了；按钮之外的只有：拖点校准 · Shift+方向键 微调 · 右键点节点 改可见性 · '
-            '滚轮缩放 · 空白处拖动/中键 平移 · Ctrl+→ 跳到下一张未判的' % (
+            '滚轮缩放 · 空白处拖动/中键 平移 · C 拷贝上一张 · Ctrl+→ 跳到下一张未判的' % (
                 r.get('idx'), len(self.rows), r['stem'], inst, sel, len(c.pred),
                 os.path.basename(os.path.normpath(self.pred_dir)),
                 VERDICT_CN.get(r.get('verdict') or '', r.get('verdict') or ''),
@@ -877,6 +947,7 @@ class PoseLabeler(QMainWindow):
                               if i < len(c.pred) and ins['pts'] != c.pred[i]['pts']))
         r['shift_px'] = shift_stats(points_of(c.instances, 'human'), points_of(c.pred, 'M1')) if c.pred else ''
         self.write_queue()
+        self.gt_cache[stem] = copy.deepcopy(c.instances)
         c.dirty = False
         self.refresh_status()
 
@@ -1069,6 +1140,8 @@ class PoseLabeler(QMainWindow):
             self.mark_none()
         elif k == Qt.Key_S:
             self.save_row()
+        elif k == Qt.Key_C:
+            self.copy_prev()
         elif k == Qt.Key_Comma:
             self.step(-1)
         elif k == Qt.Key_Period:
@@ -1645,6 +1718,60 @@ def selftest():
     pred_shuf = _mk(['M1.dwpose#%d' % i for i in (5, 0, 11, 3, 8, 1, 10, 2, 9, 4, 7, 6)])
     chk('位移指标按实例序号配对（按 chain 名排序会报假值，实测过 379px）',
         shift_stats(gt_many, pred_shuf).startswith('0.0/0.0'))
+
+    # ---- C 键：把上一张的真值整份拷进当前图（用户 2026-10-21 的差分套图需求）----
+    cq = os.path.join(tmp, 'copy', 'q.csv')
+    cpred = os.path.join(tmp, 'copy', 'pre')
+    cgt = os.path.join(tmp, 'copy', 'gt')
+    os.makedirs(cpred)
+    os.makedirs(cgt)
+    jdump(os.path.join(cpred, 'p1.json'), rec)
+    jdump(os.path.join(cpred, 'p2.json'), rec)
+    build_queue(cpred, cq, min_pred_vis=1)
+
+    def _gt_pts(chains):
+        out = []
+        for ch in chains:
+            for nm in BODY18:
+                out.append({'layer': 'human', 'cls': 'body', 'chain': ch,
+                            'name': 'body.%s' % nm, 'x': 10.0, 'y': 20.0, 'vis': 2})
+        return out
+
+    gt_a = _gt_pts(['H#0', 'H#1'])
+    gt_a[IDX['l_wrist']]['x'], gt_a[IDX['l_wrist']]['y'] = 123.0, 45.0   # 指纹：证明拷的是真值不是预标注
+    gt_a[IDX['neck']]['x'], gt_a[IDX['neck']]['y'], gt_a[IDX['neck']]['vis'] = 0.0, 0.0, 0
+    jdump(os.path.join(cgt, 'p1.json'), {'stem': 'p1', 'verdict': 'edit', 'instances': 2,
+                                         'points': gt_a, 'pred_points': []})
+    wc = PoseLabeler(cq, cgt, cpred, min_pred_vis=1)
+    wc.show_row()
+    wc.step(1)
+    chk('C 拷贝前：第 2 张还没判（pose_gt 里没有它）', not os.path.exists(os.path.join(cgt, 'p2.json')))
+    pre_snap = copy.deepcopy(wc.canvas.instances)
+    pos_before, undo_before = wc.pos, len(wc.canvas.undo)
+    wc.keyPressEvent(_key(Qt.Key_C))
+    gi = jload(os.path.join(cgt, 'p2.json'))
+    src0 = [p for p in gt_a if p['chain'] == 'H#0']
+    got0 = [p for p in gi['points'] if p['chain'] == 'H#0']
+    chk('C 拷贝：实例数与源图相等（2 个）', gi['instances'] == 2 and len(wc.canvas.instances) == 2)
+    chk('C 拷贝：点数与坐标/可见度逐项相等（18 点，含指纹点与缺失的 neck）',
+        len(got0) == 18 and all((p['x'], p['y'], p['vis']) == (q['x'], q['y'], q['vis'])
+                                for p, q in zip(got0, src0)))
+    chk('C 拷贝：不翻页', wc.pos == pos_before)
+    chk('C 拷贝：判定记 edit（不引入新的 verdict 值）', gi['verdict'] == 'edit')
+    crow = list(csv.DictReader(io.open(cq, encoding='utf-8')))[1]
+    chk('C 拷贝：队列 note 记了来源图 copy_from=p1', 'copy_from=p1' in (crow['note'] or ''))
+    chk('C 拷贝：撤销栈加了一格', len(wc.canvas.undo) == undo_before + 1)
+    chk('C 拷贝：画布实例与源图 18 点逐项相等（不是只写盘）',
+        [tuple(t) for t in wc.canvas.instances[0]['pts']]
+        == [(p['x'], p['y'], p['vis']) for p in src0])
+    wc.keyPressEvent(_key(Qt.Key_Z))
+    chk('C 拷贝后 Z：实例回到拷贝前的预标注（拷贝可撤销）',
+        [i['pts'] for i in wc.canvas.instances] == [i['pts'] for i in pre_snap])
+    wc.jump(1)
+    wc.keyPressEvent(_key(Qt.Key_C))
+    chk('C 在第 1 张：状态栏提示没有"上一张"，不崩', '上一张' in wc.status.text())
+    chk('缺失关节占位点 (0,0,0) 判为"不画"，vis=0 但坐标有效仍要画',
+        phantom(0.0, 0.0, 0) and not phantom(0.0, 0.0, 2) and not phantom(5.0, 7.0, 0))
 
     bad = [n for n, c_ in ok if not c_]
     print('\n自检结果：%d/%d 通过%s' % (len(ok) - len(bad), len(ok), ('　失败：%s' % bad) if bad else ''))

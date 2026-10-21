@@ -352,11 +352,11 @@ python "<你的用户目录>\.dsh\skills\comfyui-image-generation\scripts\check_
 | `--src` | image file or directory (several allowed) |
 | `--out` | output dir (default `./part_check_out`): the suite's raw contract JSON + `summary.json` |
 | `--recipe prod\|rec` | `prod` (default) = current production setting (imgsz 1280 + current M3 dual weights); `rec` = measured better (imgsz 1600 + the three leak-free M3 seeds, **not yet the production default**) |
-| `--imgsz` / `--m3-conf` / `--foot-crop` / `--hand-weights` / `--m3-weights` / `--no-foot-tight` | passed through to the suite entry (`locate.py --help`) |
+| `--imgsz` / `--hand-imgsz` / `--m3-conf` / `--foot-crop` / `--hand-weights` / `--m3-weights` / `--no-foot-tight` | passed through to the suite entry (`locate.py --help`). `--hand-imgsz` defaults to 1536: a second detector pass replaces (not merges) the hand boxes from the main pass; `--hand-imgsz 1280` restores the old behaviour |
 | `--mask` | hand/foot mask PNG (suite behaviour) |
 | **`--person-masks`** | **per-person silhouette** (multi-character per-person repaint; see below) |
 | `--person-mask-model` | `sam` (default, this skill's SAM ViT-B) / `hull` (M1 keypoint convex hull only, no SAM) |
-| `--person-mask-prompt` | `pose` (default) = skeleton bounding box + torso positive points; `box` = detector person box only |
+| `--person-mask-prompt` | `pose` (default) = skeleton bounding box + torso positive points; `box` = detector person box only (pulls props in); `ownbox` = **that chain's own person box** + torso points — measured better for upright/sitting close-contact two-person (+0.26 mask-to-box IoU, 7/7) and makes the two masks stop being near-duplicates, but worse for lying/multi-person scenes, so use it per image rather than by default |
 | `--person-mask-cover` | `auto` (default, **cover generously**) / `tight` (edge-hugging, does not touch props) / `full` (guarantees the whole skeleton inside) |
 | `--grow N` / `--no-fill-holes` / `--no-clip-to-pose` / `--no-merge-overlap` / `--person-min-prob` | the four mask post-processing switches |
 | `--ignore-cls` | ignore classes in the summary, e.g. a blindfold the design requires: `--ignore-cls blindfold` |

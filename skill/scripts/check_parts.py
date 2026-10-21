@@ -546,15 +546,20 @@ def person_masks(img_path, rec, a, mask_dir):
             # 提示策略（2026-10-13 实测）：只用**检测框**当 box 提示时，SAM 会把"人坐着的椅子/雪橇"
             # 一起算进人（面积 10% vs 6%）；改成 **骨架外接框 + 躯干正样本点** 后，椅子被正确排除。
             pos = []
-            if a.person_mask_prompt == 'pose' and len(kps) >= 3:
+            if a.person_mask_prompt in ('pose', 'ownbox') and len(kps) >= 3:
                 want = ('neck', 'left_shoulder', 'right_shoulder', 'left_hip', 'right_hip', 'nose')
                 pos = [(int(p['x']), int(p['y'])) for p in rec.get('points', [])
                        if p.get('chain') == it['chain'] and p.get('name', '').split('.')[-1] in want
                        and 0 <= int(p['y']) < H and 0 <= int(p['x']) < W]
-                hx, hy, hw, hh = cv2.boundingRect(cv2.convexHull(np.array(kps, np.int32)))
-                pad = int(0.10 * max(hw, hh))
-                pbox = [max(0, hx - pad), max(0, hy - pad), min(W, hx + hw + pad), min(H, hy + hh + pad)]
-                prompt = 'pose'
+                if a.person_mask_prompt == 'ownbox':
+                    # 该链自己的 person 框：贴身双人时凸包会横跨两人，导致两条链拿到同一块掩版
+                    pbox = [x0, y0, x1, y1]
+                    prompt = 'ownbox'
+                else:
+                    hx, hy, hw, hh = cv2.boundingRect(cv2.convexHull(np.array(kps, np.int32)))
+                    pad = int(0.10 * max(hw, hh))
+                    pbox = [max(0, hx - pad), max(0, hy - pad), min(W, hx + hw + pad), min(H, hy + hh + pad)]
+                    prompt = 'pose'
             else:
                 pbox = [x0, y0, x1, y1]
             kwargs = dict(box=np.array(pbox, np.float32)[None, :], multimask_output=True)
@@ -795,9 +800,11 @@ def main():
                     help='导出**逐人掩版**（灰度 255=重绘区 + ComfyUI 语义 RGBA）')
     ap.add_argument('--person-mask-model', choices=['sam', 'hull'], default='sam',
                     help='sam（默认，box 提示 + 关键点校验）；hull=只用 M1 关键点凸包（不需要 SAM）')
-    ap.add_argument('--person-mask-prompt', choices=['pose', 'box'], default='pose',
+    ap.add_argument('--person-mask-prompt', choices=['pose', 'box', 'ownbox'], default='pose',
                     help='pose（默认）= 骨架外接框 + 躯干正样本点（实测能把椅/雪橇排除）；'
-                         'box = 只用检测器 person 框（会把坐着的人下面的道具一起包进来）')
+                         'box = 只用检测器 person 框（会把坐着的人下面的道具一起包进来）；'
+                         'ownbox = 该链自己的 person 框 + 躯干正样本点（实测：直立/坐姿贴身双人比 pose 好 '
+                         '+0.21 IoU，且两条链的掩版不再几乎重合；横躺/多人会变差，仅按需用）')
     ap.add_argument('--person-mask-cover', choices=['auto', 'tight', 'skeleton', 'hull', 'box'],
                     default='auto',
                     help='掩版覆盖策略（默认 auto：依次试 骨架膨胀→凸包，取第一个"关键点覆盖≥0.95"的，'

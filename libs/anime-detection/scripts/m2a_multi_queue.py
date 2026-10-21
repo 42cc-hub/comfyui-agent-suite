@@ -13,7 +13,8 @@
   * 交互代理 proxy_score = 0.5×两人手框中心距<8%对角线的对数 + 0.3×手框跨两人 person 框 + 0.2×两 person 框重叠
     —— 代的是"两人挨得近、手互相碰"，**不是**真实交互标注；进 selection.csv 供复核
   * hand_small = det_v2 手框长边中位数 < 72px（**按 rank 阶段 960 口径判**，只用于名额分配）
-  * person 预填做包含度去重：贪心保留面积大/置信高的框，删掉被 ≥0.90 包含的框，删除逐条记 `dropped_nested.csv`
+  * person 预填去重（2026-10-21 换规则）：**只处理巨型重复对** —— 双方面积/图 > 0.50 且 IoU ≥ 0.50 时删 conf 低的那个；
+    不再用 containment ≥ 0.90（那条会把贴着同一个巨框的另一位真人删掉，`g3_02_duo_*` 实测覆盖 2→0）。删除逐条记 `dropped_nested.csv`
 """
 import argparse
 import csv
@@ -33,9 +34,11 @@ W_DET_V2 = os.path.join(SUITE, 'runs', 'm2a_det_fix_v2', 'weights', 'best.pt')
 W_HAND_V3 = os.path.join(SUITE, 'runs', 'm2a_hand_v3', 'weights', 'best.pt')
 FIELDS = ['idx', 'crop', 'source', 'head', 'target', 'prop', 'prop_src', 'prop_conf',
           'wd14', 'verdict', 'boxes', 'edited', 'note']
-DROP_FIELDS = ['image', 'stem', 'target', 'keep_idx', 'drop_idx', 'containment', 'keep_area', 'drop_area']
+DROP_FIELDS = ['image', 'stem', 'target', 'keep_idx', 'drop_idx', 'containment', 'keep_area', 'drop_area', 'rule']
+RULE = 'r5'        # 默认去重规则（lead 2026-10-22 定：r5 安全优先，r5b 会误删真人只作对照）
 PREF_CONF = 0.10
-NEST_THR = 0.90
+GIANT_THR = 0.50   # person 巨型：面积/图面积
+DUP_IOU = 0.50     # 同一个人被两个巨型框框住时的 IoU 门槛
 SMALL_PX = 72.0
 
 
@@ -80,16 +83,50 @@ def dedupe_conf(preds, thr=0.5):
     return keep
 
 
-def drop_nested(boxes, thr=NEST_THR):
-    order = sorted(range(len(boxes)), key=lambda i: -area(boxes[i]['box']))
+def dedupe_person(boxes, img_area, rule=None, giant=GIANT_THR, dup_iou=DUP_IOU):
+    """person 去重，规则由 --dedup-rule 选（默认 r5）。
+
+    r5  = 双方 area/img_area > giant 且 IoU >= dup_iou 且面积比 min/max < 0.85 ⇒ 删 conf 低的。
+          只清「尺度明显错位的重复框」（巨框罩正常框这种形态）。26 张横躺/贴身实测：删 0 个真人、
+          清 1/12 个伪框；真人对面积比实测 0.86–1.00，天然不进这条线。
+    r0  = 旧规则（双方巨型 + IoU）：60 图集删 14 框不误删，但 26 张贴身图误删 6 个真人 ⇒ 弃用。
+    r5b = 只 IoU + 面积比（不限面积）：清得动（伪框删 7/12）但 60 图集误删 2 个真人 ⇒ 只作对照。
+    off = 不去重。
+
+    几何上分不开的部分：真人对 r∈[0.86,1.00]，伪框对 r∈[0.53,0.99]，重叠区间里都有；尺寸相近的
+    重复框必须留给人工，靠调阈值解决不了（下一步应引入结构信号，如同一 person 链/同一头框）。
+    """
+    rule = rule or RULE
+    if rule == 'off':
+        return list(boxes), []
+    order = sorted(range(len(boxes)), key=lambda i: (-boxes[i]['conf'], -area(boxes[i]['box'])))
     kept, drops = [], []
     for i in order:
         b = boxes[i]['box']
-        host = next((k for k in kept if containment(b, k['box']) >= thr), None)
+        host = None
+        for k in kept:
+            v = iou(b, k['box'])
+            if v < dup_iou:
+                continue
+            a, c = area(b), area(k['box'])
+            r = min(a, c) / max(a, c) if max(a, c) > 0 else 0.0
+            if rule == 'r0':
+                ok = a / img_area > giant and c / img_area > giant
+            elif rule == 'r5':
+                ok = a / img_area > giant and c / img_area > giant and r < 0.85
+            elif rule == 'r5b':
+                ok = r < 0.85
+            else:
+                raise SystemExit('unknown dedup rule: %s' % rule)
+            if ok:
+                host = (k, v)
+                break
         if host is None:
             kept.append(boxes[i])
         else:
-            drops.append({'keep': host, 'drop': boxes[i], 'containment': round(containment(b, host['box']), 4)})
+            drops.append({'keep': host[0], 'drop': boxes[i],
+                          'containment': round(containment(b, host[0]['box']), 4),
+                          'iou': round(host[1], 4), 'rule': rule})
     kept.sort(key=lambda z: -z['conf'])
     return kept, drops
 
@@ -134,7 +171,7 @@ def features(preds, files, near_frac):
         hands += [p for p in rec.get('hand', {}).get('hand', []) if p['conf'] >= PREF_CONF]
         feet = [p for p in rec['det'].get('foot', []) if p['conf'] >= PREF_CONF]
         hands, feet = dedupe_conf(hands), dedupe_conf(feet)
-        kept_p, drops_p = drop_nested(persons)
+        kept_p, drops_p = dedupe_person(persons, float(rec['w']) * float(rec['h']))
         near = sum(1 for i in range(len(hands)) for j in range(i + 1, len(hands))
                    if ((center(hands[i]['box'])[0] - center(hands[j]['box'])[0]) ** 2 +
                        (center(hands[i]['box'])[1] - center(hands[j]['box'])[1]) ** 2) ** 0.5 < near_frac * diag)
@@ -171,7 +208,11 @@ def main():
     ap.add_argument('--imgsz', type=int, default=1280)
     ap.add_argument('--conf-dump', type=float, default=0.01)
     ap.add_argument('--include-candidates', action='store_true', help='把 candidates 原始渲染池也算进候选（默认只用品线交付图）')
+    ap.add_argument('--dedup-rule', choices=['r5', 'r0', 'r5b', 'off'], default='r5',
+                    help='person 框去重规则：r5=尺度错位对（默认，安全优先）、r0=旧规则、r5b=不限面积（会误删真人，仅对照）、off=不去重')
     a = ap.parse_args()
+    global RULE
+    RULE = a.dedup_rule
 
     for d in (OUT, os.path.join(OUT, 'preds'), os.path.join(OUT, 'images')):
         os.makedirs(d, exist_ok=True)
@@ -286,7 +327,7 @@ def main():
         hands += [p for p in rec['hand'].get('hand', []) if p['conf'] >= PREF_CONF]
         feet = [p for p in rec['det'].get('foot', []) if p['conf'] >= PREF_CONF]
         hands, feet = dedupe_conf(hands), dedupe_conf(feet)
-        kept_p, drops_p = drop_nested(persons)
+        kept_p, drops_p = dedupe_person(persons, float(rec['w']) * float(rec['h']))
 
         crop = os.path.basename(row['path'])
         base, ext = os.path.splitext(crop)
@@ -323,7 +364,8 @@ def main():
                           'keep_idx': ','.join('%.0f' % v for v in d['keep']['box']),
                           'drop_idx': ','.join('%.0f' % v for v in d['drop']['box']),
                           'containment': d['containment'],
-                          'keep_area': int(area(d['keep']['box'])), 'drop_area': int(area(d['drop']['box']))})
+                          'keep_area': int(area(d['keep']['box'])), 'drop_area': int(area(d['drop']['box'])),
+                          'rule': d.get('rule', RULE)})
 
     with io.open(os.path.join(OUT, 'index.csv'), 'w', encoding='utf-8', newline='') as fh:
         w = csv.DictWriter(fh, fieldnames=FIELDS)
@@ -338,6 +380,14 @@ def main():
     print('图 %d 张 → 队列行 %d ／嵌套重复人框：图 %d 张、删除 %d 条／person 框数≠人数：%d 张' % (
         len(picked_rows), len(rows), sum(1 for s in stats if s['nested']), len(drops),
         sum(1 for s in stats if s['mismatch'])))
+    # lead 要求：每次构建都打一行 + 元数据落盘（不改 index.csv 的 schema）
+    print('dedup=%s 删 %d 框（尺度错位对）；尺寸相近的重复框请人工删' % (RULE, len(drops)))
+    meta = {'rule': RULE, 'thresholds': {'giant_area_frac': GIANT_THR, 'iou': DUP_IOU, 'area_ratio': 0.85},
+            'images': len(picked_rows), 'dropped_boxes': len(drops),
+            'images_with_drops': sum(1 for s in stats if s['nested']),
+            'built_at': time.strftime('%Y-%m-%d %H:%M:%S')}
+    json.dump(meta, io.open(os.path.join(OUT, 'dedup_meta.json'), 'w', encoding='utf-8'),
+              ensure_ascii=False, indent=1)
     print('按人数：2 人 %d（数对不上 %d）/ 3 人 %d（数对不上 %d）' % (
         sum(1 for s in stats if s['total'] == 2), sum(1 for s in stats if s['total'] == 2 and s['mismatch']),
         sum(1 for s in stats if s['total'] == 3), sum(1 for s in stats if s['total'] == 3 and s['mismatch'])))

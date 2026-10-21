@@ -82,7 +82,9 @@ class Canvas(QWidget):
         super().__init__()
         self.pix = None
         self.scale = 1.0
-        self.boxes = []                 # [{'r': [x0,y0,x1,y1], 'kind': 'prop'|'user'}]
+        self.boxes = []                 # [{'r': [x0,y0,x1,y1], 'kind': 'prop'|'user', 'anchors': [(x,y),...]}]
+        self.sel = None                 # 当前选中的框下标（点模式只作用在它身上）
+        self.anchor_mode = True         # 点模式：右键给选中框加锚定点（≥4 点 ⇒ 框 = 外接框）
         self.ref = None                 # 参照框（原始预标注），永不保存
         self.drag = None
         self.edited = False
@@ -94,6 +96,7 @@ class Canvas(QWidget):
     def set_image(self, path):
         self.pix = QPixmap(path)
         self.boxes = []
+        self.sel = None
         self.ref = None
         self.drag = None
         self.dirty = False
@@ -133,19 +136,26 @@ class Canvas(QWidget):
             p.setPen(QPen(QColor(0, 200, 235), 1, Qt.DashLine))
             p.setBrush(Qt.NoBrush)
             p.drawRect(QRect(int(x0), int(y0), max(1, int(x1 - x0)), max(1, int(y1 - y0))))
-        for b in self.boxes:
+        for bi, b in enumerate(self.boxes):
             x0, y0, x1, y1 = [v * self.scale for v in b['r']]
             if b['kind'] == 'prop':
                 p.setPen(QPen(QColor(0, 220, 255), 2, Qt.DashLine))
             else:
                 p.setPen(QPen(QColor(90, 255, 130), 2))
+            if bi == self.sel:                      # 选中框：橙线，提示"点模式作用在它身上"
+                p.setPen(QPen(QColor(255, 170, 40), 3))
             p.setBrush(Qt.NoBrush)
             p.drawRect(QRect(int(x0), int(y0), max(1, int(x1 - x0)), max(1, int(y1 - y0))))
-            if b['kind'] == 'user':
+            if b['kind'] == 'user' and bi != self.sel:
                 p.setBrush(QBrush(QColor(90, 255, 130)))
                 p.setPen(QPen(QColor(90, 255, 130)))
                 for cx, cy in ((x0, y0), (x1, y0), (x0, y1), (x1, y1)):
                     p.drawRect(int(cx - 3), int(cy - 3), 6, 6)
+            # 锚定点：橙红小圆，≥4 点时框已由这些点的外接框推出
+            for ax, ay in b.get('anchors') or []:
+                p.setBrush(QBrush(QColor(255, 90, 90)))
+                p.setPen(QPen(QColor(255, 220, 220), 1))
+                p.drawEllipse(int(ax * self.scale - 4), int(ay * self.scale - 4), 8, 8)
 
     # ---- 鼠标 ----
     def _hit(self, pos):
@@ -165,25 +175,58 @@ class Canvas(QWidget):
                 return i, None
         return None, None
 
+    def _clear_anchors(self, keep=None):
+        """换选中框就重新按点：别的框的锚点一律清掉。"""
+        for bi, b in enumerate(self.boxes):
+            if bi != keep and b.get('anchors'):
+                b['anchors'] = []
+
+    def add_anchor(self, pos):
+        """右键：给选中框加一个锚定点；满 4 点后框 = 这些点的外接框。"""
+        if self.sel is None or self.sel >= len(self.boxes):
+            return False
+        b = self.boxes[self.sel]
+        ix, iy = pos.x() / self.scale, pos.y() / self.scale
+        b.setdefault('anchors', []).append((ix, iy))
+        if len(b['anchors']) >= 4:
+            xs = [a[0] for a in b['anchors']]
+            ys = [a[1] for a in b['anchors']]
+            b['r'] = [min(xs), min(ys), max(xs), max(ys)]
+            b['kind'] = 'user'                  # 锚点重画 ⇒ 已不是原始预标注
+        self.changed(edited=True)
+        self.update()
+        return True
+
     def mousePressEvent(self, e):
         if self.pix is None:
             return
         ix, iy = e.pos().x() / self.scale, e.pos().y() / self.scale
         i, corner = self._hit(e.pos())
         if e.button() == Qt.RightButton:
+            if self.anchor_mode and self.add_anchor(e.pos()):
+                return
             if i is not None:
                 del self.boxes[i]
+                self.sel = None
                 self.changed(edited=True)
             return
         if i is not None and corner:
+            if self.sel != i:
+                self._clear_anchors(keep=i)
+                self.sel = i
             self.drag = dict(mode='resize', i=i, corner=corner, start=(ix, iy),
                              orig=list(self.boxes[i]['r']))
         elif i is not None:
+            if self.sel != i:
+                self._clear_anchors(keep=i)     # 换人 ⇒ 旧锚点作废，重新按点
+                self.sel = i
             self.drag = dict(mode='move', i=i, start=(ix, iy), orig=list(self.boxes[i]['r']))
         else:
+            self._clear_anchors()
             self.drag = dict(mode='new', start=(ix, iy))
             self.boxes.append({'r': [ix, iy, ix, iy], 'kind': 'user'})
             self.drag['i'] = len(self.boxes) - 1
+            self.sel = len(self.boxes) - 1
         self.update()
 
     def mouseMoveEvent(self, e):
@@ -238,6 +281,8 @@ class Canvas(QWidget):
             self.update()
             return
         self.boxes[i]['r'] = r
+        if mode == 'resize':
+            self.boxes[i]['anchors'] = []          # 手拖过角点 ⇒ 锚点作废，避免两套定义打架
         # 只点了一下、没真正移动（例如想把预标注放大看清楚）⇒ 不算修改，
         # 否则一次空点击就会把"预标注"标成"人改过的框"，把通过率算脏
         if mode != 'new' and orig is not None and all(abs(a - b) <= 0.5 for a, b in zip(r, orig)):
@@ -307,6 +352,13 @@ class Labeler(QMainWindow):
         self.hint.setWordWrap(True)
         self.hint.setStyleSheet('color:#06c; font-weight:bold;')
         side.addWidget(self.hint)
+
+        side.addSpacing(6)
+        self.pmode = QLabel('')
+        self.pmode.setWordWrap(True)
+        self.pmode.setStyleSheet('color:#c60;')
+        side.addWidget(self.pmode)
+        self._sync_pmode()
 
         side.addSpacing(10)
         self.b_done = QPushButton('1 / →　画好了，下一轮')
@@ -446,6 +498,7 @@ class Labeler(QMainWindow):
         self.canvas.update()
         self.fit()
         self._loading = False
+        self._sync_pmode()
         self.spin.setValue(int(r['idx']))
         n_lab = sum(1 for x in self.rows if (x.get('verdict') or '').strip())
         self.status.setText('进度 %d/%d ｜ 已判 %d/%d ｜ 本轮: %s ｜ 每步即时落盘'
@@ -468,10 +521,22 @@ class Labeler(QMainWindow):
             self.fit()
 
     # ---------- 行为 ----------
+    def _sync_pmode(self):
+        on = self.canvas.anchor_mode if hasattr(self, 'canvas') else True
+        n = 0
+        c = getattr(self, 'canvas', None)
+        if c is not None and c.sel is not None and c.sel < len(c.boxes):
+            n = len(c.boxes[c.sel].get('anchors') or [])
+        if on:
+            self.pmode.setText('点模式：开 ｜ 右键=给选中框加锚定点（%d/4），≥4 点后框=外接框 ｜ P 切换' % n)
+        else:
+            self.pmode.setText('点模式：关 ｜ 右键=删掉光标下的框 ｜ P 切换')
+
     def on_canvas_change(self):
         if self._loading:
             return
         self.hint.setText('已画好 —— 按 1 或 → 进入下一轮（按 C 清空重画）')
+        self._sync_pmode()
 
     def _apply(self, verdict, boxes, advance):
         r = self.current_row()
@@ -664,6 +729,21 @@ class Labeler(QMainWindow):
         elif k == Qt.Key_S:
             self.save()
             self.status.setText('已保存 → %s' % self.queue)
+        elif k == Qt.Key_P:
+            self.canvas.anchor_mode = not self.canvas.anchor_mode
+            self._sync_pmode()
+            self.status.setText('点模式：%s（右键=加锚定点；≥4 点后框=外接框；关掉后右键=删框）'
+                                % ('开' if self.canvas.anchor_mode else '关'))
+        elif k == Qt.Key_Delete:
+            c = self.canvas
+            if c.sel is not None and c.sel < len(c.boxes):
+                del c.boxes[c.sel]
+                c.sel = None
+                c.changed(edited=True)
+                c.update()
+                self.status.setText('已删除选中框')
+            else:
+                self.status.setText('没有选中框：先左键点一下框，再按 Delete')
         elif k == Qt.Key_U:
             self.cb_un.setChecked(not self.cb_un.isChecked())
         else:

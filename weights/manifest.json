@@ -1,6 +1,6 @@
 {
   "schema": 1,
-  "note": "权重不打进仓库，走 Release 下载：python skill/scripts/fetch_weights.py --from-release 42cc-hub/comfyui-agent-suite@weights-v1,weights-v2,weights-v3",
+  "note": "权重不打进仓库，走 Release 下载：python skill/scripts/fetch_weights.py --from-release 42cc-hub/comfyui-agent-suite@weights-v1,weights-v2,weights-v3,weights-v4",
   "weights": [
     {
       "name": "m2b_face4_v3_rot60_s20261013",
@@ -233,6 +233,86 @@
       "file": "m2a_hand_v3.best.pt",
       "size": 5477658,
       "sha256": "6bc9613ef5c08185e5dcdbb1bd61ad8d724082b958d6244dab42469435dae85c"
+    },
+    {
+      "name": "m2a_det_rot_semi",
+      "task": "m2a_det",
+      "desc": "旋转增强检测主干：locate.py 的 DEF_DET_LIMB，手第二遍（--hand-imgsz 1536）的默认来源",
+      "config": "imgsz 960 · 0/30/60/90° 旋转增强",
+      "metrics": {
+        "用途": "双头混合：person/head ← m2a_det_fix_v2，hand/foot ← 本权重",
+        "位置": "locate.py:74（DEF_DET_LIMB）、:237 存在性检查、:473 第二遍取模型",
+        "复现": "docs/m2a_boxfix.md §现役默认值"
+      },
+      "file": "m2a_det_rot_semi.best.pt",
+      "size": 5481242,
+      "sha256": "cac11e11c4a68442a4c41b438b07bbd2c7af30e490a5a6100292821021b7f33f"
+    },
+    {
+      "name": "m3_cls_aug_v1",
+      "task": "m3_cls",
+      "desc": "M3 质量分类第一支：locate.py 的 DEF_M3 默认之一",
+      "config": "数量/形状类缺陷 + 增强",
+      "metrics": {
+        "位置": "locate.py:77（DEF_M3）",
+        "复现": "docs/m3_status.md"
+      },
+      "file": "m3_cls_aug_v1.best.pt",
+      "size": 3188226,
+      "sha256": "86c52f2a9988d38115ad6845310b8d7f719b60b55f35443d9ce507e1b4e93e70"
+    },
+    {
+      "name": "m3_review_v1",
+      "task": "m3_cls",
+      "desc": "M3 质量分类第二支：locate.py 的 DEF_M3 默认之一（含用户新判 200 张与“不是手脚”负例）",
+      "config": "含 92 张“不是手脚”负例",
+      "metrics": {
+        "位置": "locate.py:77（DEF_M3）",
+        "复现": "docs/m3_status.md"
+      },
+      "file": "m3_review_v1.best.pt",
+      "size": 3191042,
+      "sha256": "44896fc29d1c68b7209d382713aaec273570c604c423b9a256858f670a78f5d1"
+    },
+    {
+      "name": "m2b_face_v3_3983",
+      "task": "m2b_face",
+      "desc": "M2b 面部（眼/嘴/表情类）：locate.py 的 DEF_FACE 默认",
+      "config": "256 固定画布",
+      "metrics": {
+        "位置": "locate.py:84（DEF_FACE）",
+        "注意": "val mAP50 0.993 被 ds_face 同族泄漏撑大，不可引用（docs/runs.md R52）",
+        "复现": "docs/runs.md"
+      },
+      "file": "m2b_face_v3_3983.best.pt",
+      "size": 21219875,
+      "sha256": "e357f60503157aa7564cfd7b3aa001c5379d0405b0e4904d7aa0c90a7a38d3a5"
+    },
+    {
+      "name": "m2b_gag_v2",
+      "task": "m2b_gag",
+      "desc": "M2b 口塞/眼罩：locate.py 的 DEF_GAG 默认之一",
+      "config": "289 head",
+      "metrics": {
+        "位置": "locate.py:85（DEF_GAG）",
+        "复现": "docs/runs.md"
+      },
+      "file": "m2b_gag_v2.best.pt",
+      "size": 5437274,
+      "sha256": "8fe1b133163f8b2e633e913e04b3145fe3b675d29fa8301976c97c1fe091e6ac"
+    },
+    {
+      "name": "m2b_gag_v4",
+      "task": "m2b_gag",
+      "desc": "M2b 口塞/眼罩：locate.py 的 DEF_GAG 默认之一（blindfold 更可信）",
+      "config": "580 head",
+      "metrics": {
+        "位置": "locate.py:85（DEF_GAG）",
+        "复现": "docs/runs.md"
+      },
+      "file": "m2b_gag_v4.best.pt",
+      "size": 5437722,
+      "sha256": "753ea3d11fd46d9714b9f84f0a5c823567ea66cdda8a7958ac04fb80046df0c5"
     }
   ]
 }

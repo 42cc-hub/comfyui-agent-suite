@@ -2,7 +2,7 @@
 
 **用途**：这个套件的 `scripts\` 里有 100 多个 `.py`，其中一半只回答过一个问题就该归档。本文按"线"归类，并给每个脚本标 **入口**（日常/产线会反复用，能一条命令复现某个结论）或 **一次性诊断**（为某个具体问题跑过、结论已落进 docs/，留作证据、不必再跑）。
 
-**数量是移动目标，别引用本文的张数**：实测 2026-10-21 03:0x 为 100 个、03:5x 为 **102** 个 —— 写本文的 40 分钟里 `dualpose_pick.py` / `dualpose_viz.py` / `dualpose_probe.py` / `m2a_eval_holdout.py` 被陆续加进来（M1 双人诊断线 + M2a holdout 复核）。要当下准确数就现跑：
+**数量是移动目标，别引用本文的张数**：实测 2026-10-21 03:0x 为 100 个、03:5x 为 **102** 个、**2026-10-22 02:59 为 217 个** —— 写本文的 40 分钟里 `dualpose_pick.py` / `dualpose_viz.py` / `dualpose_probe.py` / `m2a_eval_holdout.py` 被陆续加进来（M1 双人诊断线 + M2a holdout 复核），此后 M2a person 线与双人线又批量入库。要当下准确数就现跑：
 
 ```powershell
 (Get-ChildItem <ANIME_DET_SUITE>\scripts -Filter *.py -File).Count
@@ -16,18 +16,20 @@
 
 | 模块 | 交付级 | 现役权重（`locate.py` 默认） | 关键数字 / 状态 | 状态文档 |
 |---|---|---|---|---|
-| **M1 骨骼** | **是** | `DEF_POSE=[runs/m1_pose_coco17, runs/m1_pose17_1129]`；`DEF_VITPOSE=models/vitpose_ft_v6_labelbox_honly`（行 54-58） | ViTPose 覆盖 88% / 中位 23.1px / p90 97.8；YOLO-pose 89% / 70.5 / 335.0（15 张报告集、297 关节） | `docs\pose_m1_status.md` |
-| **M2a 人/手/脚/头框** | 是（默认值还是旧的） | `DEF_DET=runs/m2a_det_996img_960`（行 68） | 4 类 person .984 / hand .914 / foot .694 / head .978（旧口径）；**新权重 v2 实测 0.373→0.695（脚 0.000→0.604）、误报 0/9，但 `DEF_DET` 还没指过去** | `docs\m2a_boxfix.md` |
-| M2a 专用脚/手 | 脚=否，手=待接 | `DEF_FOOT=runs/m2a_foot_v1`；`--hand-weights` 默认 **None** | 专用脚 `m2a_foot_v1` 在修框验收池全 0.000（v1 命中 14.6%）⇒ 别指望；专用手 v3 中位 0.633→**0.810**（验证 0.8870→0.8757）**但没接默认** | `docs\m2a_boxfix.md` §5 |
+| **M1 骨骼** | **是** | `DEF_POSE=[runs/m1_pose_coco17, runs/m1_pose17_1129]`；**`DEF_VITPOSE=models/vitpose_rot_abs`（行 63；2026-10-22 起默认，HF 目录 343,677,411 B、`model.safetensors` sha `8E98B16C…817C86`、归档自 `runs/m1_pose_rot_abs`；回滚=改回 `models/vitpose_ft_v6_labelbox_honly` 一行）** | 换权重证据（产线 det 框口径、48 图 holdout 四桶）：PCK@0.05 **0.506→0.588（p=0.044）**、端点 0.399→0.482、swap 0.560→0.498、链归属 0.775 不变；9 张等价性验收 JSON 0 差异。v6 旧口径：覆盖 88% / 中位 23.1px / p90 97.8；YOLO-pose 89% / 70.5 / 335.0（15 张报告集、297 关节） | `docs\pose_m1_status.md` |
+| **M2a 人/手/脚/头框** | 是（**默认=双头混合**） | `DEF_DET=runs/m2a_det_fix_v2`（行 68，person/head）+ `DEF_DET_LIMB=runs/m2a_det_rot_semi`（行 74，hand/foot）；`--det-weights` 默认 `None`=混合，传了就回单模型（行 154-160）；person 去重默认 **`r5`**（`m2a_multi_queue.py:38`、`:211-212`，只在队列构建、不进口线） | 半自动 40 图/45 条留出集：总体中位 IoU 0.373→0.695、脚 0.000→0.604、误报 0/9；**真值基线（batch-2 50 图/64 框）R@.5 78.1% / P 63.3% / IoU 中位 0.687 / 面积比中位 1.326 ⇒ 框系统性偏大**；旧 `containment ≥ 0.90` 去重**误删 4 个真值框**（`g3_02` 2→0、`g3_04` 2→1、`02_door` 2→1）已弃用（`docs\m2a_boxfix.md` §4） | `docs\m2a_boxfix.md` |
+| M2a 专用脚/手 | 脚=否，手=待接 | `DEF_FOOT=runs/m2a_foot_v1`；`--hand-weights` 默认 **None**；新增 `--hand-imgsz` 默认 **1536**（行 163-167，手第二遍**整类替换**、`--hand-imgsz 1280` 是逃生门；在 `m2a_det_person_hybrid2` 上第二遍无收益但产线主模型仍是 fix_v2 ⇒ 保留 1536，口径未复核） | 专用脚 `m2a_foot_v1` 在修框验收池全 0.000（v1 命中 14.6%）⇒ 别指望；专用手 v3 中位 0.633→**0.810**（验证 0.8870→0.8757）**但没接默认**；`locate.py` 给专用模型 conf 降 0.15（行 458/493） | `docs\m2a_boxfix.md` §5 |
 | M2a 脚远端 | 否（已判失败） | — | `m2a_foot_distal_v1` 不达交付 | `docs\m2a_boxfix.md` |
 | **M2b 脸/眼罩/口塞/手/脚** | 是 | `DEF_FACE=runs/m2b_face_v3_3983`；`DEF_GAG=[m2b_gag_v2, m2b_gag_v4]`（行 78-80） | face4 三 seed val mAP50-95 0.476/0.475/0.487；`ds_face_gag` 干净口径 gag 0.842 / blindfold 0.967；⚠️ `m2b_face_v3_3983` 的 val 0.993 **因泄漏不可引用**（R52，见 §4） | `docs\m2b_status.md` |
 | **M3 局部质量分类** | 是（但指标不涨） | `DEF_M3=[runs/m3_cls_aug_v1, runs/m3_review_v1]`（行 71-72，并集：任一判 non-ok 即可疑） | 固定 382 集 acc 0.7801 / AUC 0.8225 / bad 召回 0.6587；⚠️ 现役两权重 val 被污染（R43）；无泄漏替代 `runs/m3_clean_v1_s2026{1,2,3}010` **未复核** | `docs\m3_status.md` |
 | **M4 绳子** | **是** | `data/masks/rope/weights/rope_unet_resnet18_g14.pt`（thr 0.90） | holdout F1 0.9277±0.0117 / 召回 0.9812 / **precision 0.862 是瓶颈**；无 torch 兜底 `rope_mlp_k9_4img.npz` | `docs\rope_module.md` §0 |
 | 线稿/色块/线棍 | 否（探索线） | — | 见 `docs\colorblock_lineart_assessment.md` / `docs\colorblock_linewand.md` / `docs\colorblock_sam_or_wan.md` | 同左 |
 
+> **skill 侧（不在本仓库 `scripts\`）有一个掩版选项要记一笔**：`check_parts.py` 新增 `--person-mask-prompt ownbox`（**默认关，默认仍 `pose`**；`<你的用户目录>\.dsh\skills\comfyui-image-generation\scripts\check_parts.py:783-786`，分支 `:529`/`:534-537`），用本链 person 框替代关键点凸包作 SAM 提示：直立/坐姿贴身双人掩版 IoU 中位 **0.269→0.533（7/7 赢）**、pre-split 两掩版重叠 **0.93–1.00→0.03–0.84**；横躺/多人 **0.179→0.162（3 好 2 坏）** ⇒ 按图选、不改默认（`team\reports\m1-dualpose\sam_prompt_variants.md`，详见 `docs\m2a_boxfix.md` §7）。
+
 ---
 
-## 2. 100 个脚本：按线归类
+## 2. 脚本按线归类（条目为准，不按张数）
 
 标记：**【入口】** = 日常/产线会反复用；**【一次性】** = 问题已回答完，可归档（文档留数字，脚本留证据）；**【私有】** = 明确不发公版（`release_build.py` 第 53-54 行）。
 
@@ -78,7 +80,7 @@
 | `scripts\find_gag_ballonly.py` | 【一次性】 | 找"只有口塞球没有带子"的难例 |
 | `scripts\eval_face4.py` | **【入口】** | M2b 交付图验收（4 类逐图对账，选 `DEF_FACE` 指哪个就靠它） |
 
-### 2.5 M2a 评测与探针（3 个）
+### 2.5 M2a 评测与探针（7 个）
 
 | 脚本 | 标记 | 作用 |
 |---|---|---|
@@ -86,6 +88,9 @@
 | `scripts\m2a_eval_holdout.py` | **【入口】** | 同一套 holdout（`data/boxfix_holdout.csv`，conf 0.25 / imgsz 960、同一批裁图）上补 **per-class recall/precision**；precision 是**下界**、误报有 strict/loose 两口径，读数字前先看文件头的口径说明 |
 | `scripts\ablate_m2a_imgsz.py` | 【一次性】 | 输入尺寸消融 |
 | `scripts\det_probe.py` | 【一次性】 | 检测器单图探针（看某个框为什么出/不出） |
+| `scripts\m2a_person_gt2_eval.py` | 【候选·未进口线】 | batch-1/batch-2 person 真值评测（R/P/IoU/面积比/阈值敏感性），口径 conf 0.30 / imgsz 960 / CPU，一对一贪心 IoU 0.5；产出 `team\reports\m2a-verifier\person_gt2\{eval.txt,eval.json}` |
+| `scripts\m2a_person_ds.py` | 【候选训练·未进口线】 | 人框专项数据集构建：batch-1+batch-2 合并（**60 图 / 97 框**）+ 0/30/60/90° 旋转增强，warm start `m2a_det_fix_v2` → `data\ds_person`（train 47 图×4 / val 13 图×4） |
+| `scripts\m2a_person_driver.py` | 【候选训练·未进口线】 | 人框专项训练驱动（GPU 训练入口，**尚未开跑**） |
 
 ### 2.6 M1 骨骼（6 个）
 

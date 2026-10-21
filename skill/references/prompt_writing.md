@@ -412,7 +412,7 @@ python sample_prompts.py        # -> analysis/sample_prompts.txt（52 条最远�
 | 权重 | `<套件>\runs\<name>\weights\best.pt`；默认权重在 `locate.py` 顶部 `DEF_*` |
 | M1 骨架 | **首选** `models/vitpose_ft_v6_labelbox_honly`（微调 ViTPose，top-down 吃 M2a 的 person 框）；缺目录或 `--no-vitpose` 时回落 `runs/m1_pose_coco17` + `runs/m1_pose17_1129`（取检出人多的）→ dwpose |
 | M1 实测 | 固定 15 张报告集（279 关节）：ViTPose-ft 覆盖 88% / median 23.1px / p90 97.8；回落那套 71% / 66.0 / 341.6。配对聚类 bootstrap 与 dwpose 比 median 无差别（−2.0px）、mean 显著 −31.8px [−53.3,−11.0] |
-| M2a 框 | `runs/m2a_det_996img_960`（person/hand/foot/head）+ `runs/m2a_foot_v1`（单类脚，取并集）；可选 `runs/m2a_hand_v2` |
+| M2a 框 | 主检 `runs/m2a_det_fix_v2`（person/hand/foot/head）；手第二遍 `runs/m2a_det_rot_semi`（`--hand-imgsz` 默认 1536，**整类替换**主检的手框，`--hand-imgsz 1280` 回旧行为）；专用脚 `runs/m2a_foot_v1`（与四类取并集）；`runs/m2a_hand_v3` 只建议诊断用（并集会掉精度） |
 | M2b 面部 | `runs/m2b_face_v3_3983`（输入是 head 裁剪的 256×256） |
 | M2b-gag | `runs/m2b_gag_v2` + `runs/m2b_gag_v4`（并集；口塞/眼罩） |
 | M3 指趾判定 | 现役 `runs/m3_cls_aug_v1` + `runs/m3_review_v1`（**val 有训练集泄漏**，见套件 R43）；推荐 `runs/m3_clean_v1_s2026{1,2,3}010` |

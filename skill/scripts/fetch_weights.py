@@ -17,7 +17,7 @@
 用法：
     python fetch_weights.py --list
     python fetch_weights.py --from-dir D:/my_runs
-    python fetch_weights.py --from-release 42cc-hub/comfyui-agent-suite@weights-v1,weights-v2,weights-v3
+    python fetch_weights.py --from-release 42cc-hub/comfyui-agent-suite@weights-v1,weights-v2,weights-v3,weights-v4
 """
 import argparse
 import hashlib

@@ -72,7 +72,7 @@ face classes, local quality classification, COCO17 skeleton, a **fine-tuned ViTP
 
 ```bash
 python skill/scripts/fetch_weights.py --list                    # see the manifest and sizes first
-python skill/scripts/fetch_weights.py --from-release 42cc-hub/comfyui-agent-suite@weights-v1,weights-v2,weights-v3
+python skill/scripts/fetch_weights.py --from-release 42cc-hub/comfyui-agent-suite@weights-v1,weights-v2,weights-v3,weights-v4
 python skill/scripts/fetch_weights.py --from-dir D:/my_runs     # if you trained your own: find best.pt by weight name
 ```
 

@@ -172,5 +172,100 @@
 两者数字差得多（0.604 vs 52.9%），把「median IoU 0.604」写成「脚召回 0.604」是错的（本文件
 第 150 行与 `agent_work\exm_report\交接文档_20261020.md` §2.2 都有这个错，读的人自己换算）。
 
+---
+
+# 现役默认值（2026-10-22，以 `scripts\locate.py` 当前文件为准）
+
+> 本节取代上面所有「等你拍板 / 建议」字样：检测口径已按**双头混合**落地，不是整体换模型。
+> 每条都标了 file:line，改代码后先回来核这几行还成不成立。
+
+## 1. 双头混合：person/head ← `m2a_det_fix_v2`，hand/foot ← `m2a_det_rot_semi`
+
+| 角色 | 现役权重 | 开关与默认值 | 依据 |
+|---|---|---|---|
+| person / head（主检测） | `runs\m2a_det_fix_v2\weights\best.pt` | `--det-weights` 默认 `None` ⇒ 落到 `DEF_DET` | `locate.py:68`、`:154-157`、`:232-233` |
+| hand / foot（第二条腿） | `runs\m2a_det_rot_semi\weights\best.pt`（旋转增强 + 半监督） | `--det-limb-weights` 默认 `DEF_DET_LIMB` | `locate.py:74`、`:158-160`、`:235-238` |
+
+- **传 `--det-weights` 就关混合**：`det_limb_model = None`，行为回到单模型（`locate.py:231` 注释、`:235`）。
+- 两条腿都是 4 类模型：`person/head` 取主检测，`hand/foot` 取第二条腿；第二条腿的框带 `'from': 'det_limb'`（`locate.py:309-320`）。
+- 为什么**不能整体替换**成 rot_semi：旋转增强把 0° 桶也一起改了 —— hand 召回 63.3%→73.3%、foot 45.8%→66.7%，但 **person 召回 92.9%→82.1%**（`team\reports\m2a-verifier\rot_semi_det.md:14`）⇒ person 必须留在 `m2a_det_fix_v2`。
+
+## 2. `--hand-imgsz` 默认 1536：手第二遍是**替换**，不是并集
+
+- 默认 `1536`（`locate.py:163`）；`--imgsz` 默认 1280（`:196`）。
+- 做法：主检测之后换分辨率再跑一遍，**只取 `hand` 类并替换主检测那遍的 hand 框**，其他类不动（`:164-165`）。
+- 为什么替换而不是并集：实测并集的真框与第二遍**完全相同**却多 13/15 个误报（`:469` 注释）。
+- 逃生门：`--hand-imgsz 1280`（= `--imgsz`）时这段不跑 ⇒ **逐字节回到旧行为**（`:166-167`、`:474`）。实测手 1280→1536：`data/hand_gt` R .405→.481 / P .582→.717（`:167`）。
+- 两处**与任务描述不符、以代码为准**的细节：
+  1. 第二遍的模型不是固定的 `DEF_DET`，而是 `_hand_src = det_limb_model if det_limb_model is not None else det_model`（`:473`）⇒ 默认混合模式下第二遍用的是 **`m2a_det_rot_semi`**；只有传了 `--det-weights`（混合关闭）时才用主模型。
+  2. 代码里**没有 IoU 0.5 去重**：直接按对象 id 把主检测的 hand 框从 `rec['boxes']` 里摘掉、再用第二遍的 `p2` 整类替换（`:482-484`）。写文档/报数时说「整类替换」，不要写「IoU 0.5 去重后合并」。
+- `recut_crops_prod.py` **不经过 locate**：自己 `det.predict(conf=0.25, imgsz=a.imgsz)`（`recut_crops_prod.py:99`）+ `foot.predict(conf=0.2)`（`:107`），`--det` 默认 `runs\m2a_det_fix_v2`（`:44`）、`--imgsz` 默认 1280（`:47`）⇒ **M3 裁图口径不被 `--hand-imgsz`/`--conf` 影响**。
+- **在 `m2a_det_person_hybrid2` 上第二遍无收益**（手/脚略降），但产线主模型仍是 `m2a_det_fix_v2`，所以默认 **1536 保持不变**（口径：lead 2026-10-22 的 hybrid2 对比，**报告里没有对应表格** ⇒ 本条未复核；`team\reports\m2a-verifier\person_hybrid2_eval.md:64` 当时的结论仍是"要"）。
+
+## 3. `--conf` 默认 0.30；要干净裁图在消费侧 ≥0.45
+
+- 产线默认 `--conf 0.30`（`locate.py:195`），保持不动（理由见上一节第 1 条：抬到 0.45 会把脚召回打回旧模型水平）。
+- 下游（M3 裁图、批量出图前筛）在**消费侧**按 `conf ≥ 0.45` 过滤，不改产线默认（上一节第 3 条）。
+- 注意 `--conf` 同时喂给专用脚/手模型时会降 0.15（`max(0.15, conf-0.15)`，`locate.py:458`、`:493`），所以「产线 conf 0.30」对专用模型等价 0.15。这也正是「专用手模型不接默认」的原因之一。
+
+## 4. person 框去重规则 `r5`（`m2a_multi_queue`，**只在队列构建，不进口线**）
+
+- 默认规则 = **`r5`**（`m2a_multi_queue.py:38` `RULE = 'r5'`；开关 `--dedup-rule {r5,r0,r5b,off}` 默认 `r5`，`:211-212`）。签名 `dedupe_person(boxes, img_area, rule=None, giant=GIANT_THR, dup_iou=DUP_IOU)`（`:86`），常数 `GIANT_THR = 0.50`、`DUP_IOU = 0.50`。
+- 判据：**双方** `area/img_area > 0.50` 且 `IoU >= 0.50` 且 **面积比 `min/max < 0.85`** ⇒ 删 conf 低的（`:89-91`、`:115-116`）。只清"巨框罩正常框"这种**尺度错位**的重复框。
+- 26 张横躺/贴身图实测：`r5` **删 0 个真人、清 1/12 个伪框**；`r0`（旧「双方巨型 + IoU」规则）误删 **6** 个真人 ⇒ 弃用；`r5b`（不限面积）伪框清得多（7/12）但 60 图集误删 **2** 个真人 ⇒ 只作对照（`:89-93`）。
+- **更早的 `containment ≥ 0.90` 规则已弃用，不要再当建议写**：它按"小框 90% 落在更大框里"删人，实测共误删 **4 个真值框** —— `g3_02_duo_hand_inside_clothes_2000` 覆盖 2→0、`g3_04_duo_…` 2→1、`02_door_2000x1740` 2→1（`team\reports\m2a-verifier\multi_annotation_plan.md:65`；机制见 `m2a_multi_queue.py:17`、`team\reports\m1-dualpose\pose_multi_queue.md:202`）。
+- 产物：删除逐条记 `dropped_nested.csv`，**带 `rule` 列**（字段表 `:37`、写出 `:375`）；每次运行另写 `dedup_meta.json`（`:389`）。
+- 几何上分不开的部分：真人对面积比 r∈[0.86,1.00]、伪框对 r∈[0.53,0.99]，重叠区间里都有 ⇒ 尺寸相近的重复框仍要人工/结构信号（同一 person 链、同一头框），调阈值解决不了（`:96-97`）。
+- 只在队列构建里生效（`locate.py` 不做 person 去重）。
+
+## 5. 真值基线（batch-1 / batch-2，现役 person 分支）
+
+**口径**：现役 person 分支 = `m2a_det_fix_v2`；`locate.py` 实跑 conf **0.30** / imgsz **960** / CPU；一对一贪心 IoU 0.5 匹配（`team\reports\m2a-verifier\person_gt2_eval.md:13`）。样本：batch-1 = 60 图 / 97 框（`data\hand_gt_multi\index.csv`）；batch-2 = **同一批图的 50 行人工校正版**：50 图 / **64 框**（`index_person_topup.csv`），两批**不能相加**，合并后仍是 60 图 / 97 框（`person_gt2_eval.md:7-11`、`:70`）。
+
+| 指标 | batch-2（50 图 / 64 框） | batch-1（60 图 / 97 框） |
+|---|---|---|
+| 预测框数 | 79 | 123 |
+| R@IoU0.5 | **78.1%**（50/64） | 78.4% |
+| P@IoU0.5 | **63.3%** | 61.8% |
+| IoU 中位 | **0.687** | 0.665 |
+| 面积比 pred/GT 中位 | **1.326**（P10 1.096 / P90 1.586） | 1.016（P10 0.878） |
+
+- **框系统性偏大是"每张人物框都要手调"的直接原因**：匹配上的配对里 **75% 面积比 >1.2**、**0% <0.8**；面积比中位 1.326 按面积开方 ≈ 等效边长 ×1.15（`person_gt2_eval.md:20`）。
+- **不是漏人**：IoU 阈值 0.3 → R **93.8%**、0.5 → 78.1%、0.7 → 45.3%（`person_gt2_eval.md:19`、`:42-45`）⇒ 框在、边界松。
+- 数字出处：`team\reports\m2a-verifier\person_gt2_eval.md`（§0 结论、§1 主表、§1.1 敏感性）、`team\reports\m2a-verifier\person_gt2\eval.json`（`area_ratio_median: 1.326`）、重算脚本 `scripts\m2a_person_gt2_eval.py`。
+- 由此推下一步（候选，未进口线）：人框专项权重的目标**不是提召回**，而是把面积比压到 ~1.0–1.1、IoU 中位推过 0.7（`person_gt2_eval.md:69`）；数据集/驱动脚本 `scripts\m2a_person_ds.py` / `scripts\m2a_person_driver.py` 已备好，**训练未开始**。
+
+## 6. 骨架（M1）默认权重换成 `models\vitpose_rot_abs`
+
+| 项 | 值 | 依据 |
+|---|---|---|
+| 默认目录 | `models\vitpose_rot_abs`（HF 目录：`config.json` / `preprocessor_config.json` / `model.safetensors` / `meta.json` / `train_log.csv`） | `locate.py:63` `DEF_VITPOSE`、`:153` `--vitpose-dir` |
+| 来源 | `runs\m1_pose_rot_abs` 的归档副本（17 点 + 旋转增强） | 同上 |
+| 权重指纹 | `model.safetensors` **343,673,076 B**，sha256 `8E98B16C0C31ADA34DF7EB0D7A138F16C5DE91FE9B466790B7954F8AAC817C86` | 2026-10-22 实测 |
+| 生效方式 | 目录存在就优先用它当 M1（YOLO-pose 只作回落） | `locate.py:153-155` 的 help 与文件头注释 |
+
+- **产线框口径下的收益很小但显著**：四桶 PCK@0.05 实例级 **0.506 → 0.588**（对现役 v6），配对 **+8.1 点，p=0.044**（`team\reports\m1-dualpose\pose_prodlayout_eval.md:6`）。
+- **同时要记住它的脆弱面**：同一次"换框"实验里，rot_abs 掉 **−13.9 点**（p=0.0067）、现役 v6 只掉 −0.8 点（p=0.82）；图级增益 +5.8 点 **不显著**（p=0.37）（`pose_prodlayout_eval.md:3`、`:7`）⇒ 换框场景要重新看这批分数，不能假设收益稳定。
+- 候选关系没变：`runs\m1_pose_rot_abs` 在 18 点对比里仍被判"只留候选"，现在上的是 **17 点**那一版，两者别混（`team\reports\m1-dualpose\pose18_neck.md:11`）。
+
+## 7. 掩版新选项 `--person-mask-prompt ownbox`（**默认关**，按图选）
+
+- 归属：这选项在 **skill 侧** `check_parts.py`（`<你的用户目录>\.dsh\skills\comfyui-image-generation\scripts\check_parts.py`），**不在本仓库 `scripts\`**；取值 `{pose, box, ownbox}`，**默认仍是 `pose`**（`check_parts.py:783-786`），分支实现 `:529`、`:534-537`。
+- 做法：用本链自己匹配到的 **person 框**（F1 修正后那份）替代关键点凸包作 SAM 提示，另加躯干正样本点（`:534-537`）。
+- 实测（`team\reports\m1-dualpose\sam_prompt_variants.md`）：
+  - 直立/坐姿贴身双人：掩版对"自己那个人"的 person 框 IoU 中位 **0.269 → 0.533**（+0.264，**7/7 张全赢**；`:43`、`:86`）。
+  - 更关键的是"两条掩版不再几乎一样"：pre-split 口径两掩版重叠比 **0.93–1.00 → 0.03–0.84**（`:16`、`:46`）。**成品看不到这个数**——产线默认开 exclusive split，成品重叠恒为 0，"重叠~0"是切分做出来的（`:129`）。
+  - 横躺/多人：**0.179 → 0.162**（−0.017，5 张里 **3 好 2 坏**；`:60`、`:86`）⇒ 不建议直接改默认。
+- 选取判据：图里两人都占 >30% 画面且直立/坐姿重叠时用 `ownbox`，横躺/多人保持 `pose`（`:95`）。
+
+## 8. 本节未复核的
+
+- 双头混合的端到端收益只在 `rot_semi_det.md` 的分桶口径里量过，**没有在产线默认（conf 0.30 / imgsz 1280 + hand 1536）下重跑整份验收**。
+- `--hand-imgsz 1536` 的 R/P 只来自 `data/hand_gt`（`locate.py:167`），**未在交付图上复测**。
+- batch-2 只有 50 行且是同图校正版，R/P 的置信区间未算；"面积比 1.326"是这批整身/双人构图的性质，不代表所有构图。
+- `models\vitpose_rot_abs` 换默认**没有在产线整链复测**：PCK 数字来自 `pose_prodlayout_eval.md` 的 29 实例配对，端到端（locate 全流程 + 下游掩版）未重跑。
+- `--hand-imgsz` 在 hybrid2 上"无收益"这条只有 lead 口述，**报告里没有对应表格**（`person_hybrid2_eval.md:64` 当时结论仍是保留）。
+- `--person-mask-prompt ownbox` 只测了 7 张直立 + 5 张横躺/多人，样本小且都是双人贴身图；单人/群像未测。
+
 
 

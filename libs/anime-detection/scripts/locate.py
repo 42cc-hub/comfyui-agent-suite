@@ -55,7 +55,12 @@ DEF_POSE = [os.path.join(PROJ, 'runs', 'm1_pose_coco17', 'weights', 'best.pt'),
             os.path.join(PROJ, 'runs', 'm1_pose17_1129', 'weights', 'best.pt')]
 # v4：val 关键点 0.349，交付图漏 test6；新版：val 0.835，交付图漏 test5 ⇒ **两个都保留、按"检出人多的"取优**
 # ⚠️ 上面两个是 **回落**。M1 现在的首选是下面这个微调 ViTPose（2026-10-13 起）：
-DEF_VITPOSE = os.path.join(PROJ, 'models', 'vitpose_ft_v6_labelbox_honly')
+# 2026-10-22：rot 增广版，产线框口径 48 图四桶 PCK 0.506→0.588、p=0.044；回滚=改回 v6
+#   （`models/vitpose_ft_v6_labelbox_honly`）。注意它是 **HF 目录**（config/preprocessor/safetensors），
+#   不是 YOLO 的 `weights/best.pt`；单次覆盖仍用 `--vitpose-dir <目录>`。
+# 2026-10-22 晚：权重已归档到 models，runs 清理不影响（`models/vitpose_rot_abs` 与
+#   `runs/m1_pose_rot_abs` 逐文件同字节，model.safetensors sha256 8E98B16C…817C86）。
+DEF_VITPOSE = os.path.join(PROJ, 'models', 'vitpose_rot_abs')
 # 固定 15 张报告集（279 个关节，**从不参与训练/选点**）配对聚类 bootstrap 实测：
 #   ViTPose-ft v6  coverage 88% / median 23.1px / common 23.7 / p90 97.8
 #   YOLO-pose      coverage 71% / median 66.0px / common 65.6 / p90 341.6
@@ -66,6 +71,12 @@ DEF_VITPOSE = os.path.join(PROJ, 'models', 'vitpose_ft_v6_labelbox_honly')
 # 口径：top-down，吃 M2a 的 `person` 框（与 prelabel_vitpose.py / 训练评测同口径）；坐标/名字与 YOLO 分支一致
 # （COCO-17 全名 + `vis∈{0,1,2}`），所以 check_parts.py 的骨架掩版、脚召回兜底、M3 脚裁图都不用改。
 DEF_DET = os.path.join(PROJ, 'runs', 'm2a_det_fix_v2', 'weights', 'best.pt')
+# 混合的第二条腿（2026-10-21 用户批准"权重可以换"）：person/head 仍用上面这条（0° 上 person 召回 92.9%、
+# 换掉会掉到 82.1%），hand/foot 改用旋转增强半监督版 —— 脚在两个独立口径都赚（真实躺卧 33.3%→83.3%、
+# upright 独立集 32.1%→48.6%），手不亏（upright 41.8% vs 36.7%）。
+# 只在**不传 `--det-weights`** 时启用（传了就只用那一个模型，行为与改动前完全一致）；实测数据见
+# `team/reports/m2a-verifier/rot_semi_det.md` §0 第 8 条 / §10 / §12。
+DEF_DET_LIMB = os.path.join(PROJ, 'runs', 'm2a_det_rot_semi', 'weights', 'best.pt')
 # 996 张版（2.46h；**确认训练进程退出后**才敢验收）：person 0.984 / hand 0.914 / foot 0.694 / head 0.978
 # 308 张版是 0.882 / 0.750 / 0.577 / 0.899 ⇒ 数据翻 3 倍的收益
 DEF_M3 = [os.path.join(PROJ, 'runs', 'm3_cls_aug_v1', 'weights', 'best.pt'),
@@ -122,6 +133,31 @@ def _iou(a, b):
     return inter / ua if ua > 0 else 0.0
 
 
+def _dedupe_person_r5(items, img_area, giant=0.50, dup_iou=0.50, ratio=0.85):
+    """R5 去重：两个框面积都 >50% 图、IoU>=0.50 且面积比 <0.85 ⇒ 删低 conf 那个。
+
+    与 `scripts/m2a_multi_queue.py` 的 R5 同一条规则（只针对错位巨框对）。
+    刻意不放宽到"尺寸相近也删"：贴身穿插场景真人对面积比落在 .86–1.00，与伪框对
+    （.53–.99）区间重叠，几何上分不开（见 team/reports/m2a-verifier/dedup_rules/rules.txt）。
+    """
+    out = []
+    for b in sorted(items, key=lambda x: -x['prob']):
+        ba = (b['box'][2] - b['box'][0]) * (b['box'][3] - b['box'][1])
+        drop = False
+        for k in out:
+            ka = (k['box'][2] - k['box'][0]) * (k['box'][3] - k['box'][1])
+            if ba / img_area <= giant or ka / img_area <= giant:
+                continue
+            if _iou(b['box'], k['box']) < dup_iou:
+                continue
+            if min(ba, ka) / max(ba, ka, 1e-6) < ratio:
+                drop = True
+                break
+        if not drop:
+            out.append(b)
+    return out
+
+
 def mask_from_boxes(shape, items, grow=12):
     m = Image.new('L', (shape[1], shape[0]), 0)
     d = ImageDraw.Draw(m)
@@ -145,12 +181,24 @@ def main():
                          '目录不存在或传 --no-vitpose 时回落到 --pose-weights → dwpose')
     ap.add_argument('--no-vitpose', dest='vitpose_dir', action='store_const', const=None,
                     help='关掉 ViTPose，M1 回到 YOLO-pose 双权重取优')
-    ap.add_argument('--det-weights', default=DEF_DET)
+    ap.add_argument('--det-weights', default=None,
+                    help='**只给一个 4 类检测模型**：传了就只用它，不混合（与改动前行为一致）。'
+                         '不传（默认）= 双头混合：person/head 用 `runs/m2a_det_fix_v2`，'
+                         'hand/foot 用 `runs/m2a_det_rot_semi`（见 --det-limb-weights）')
+    ap.add_argument('--det-limb-weights', default=DEF_DET_LIMB,
+                    help='混合模式下提供 hand/foot 的 4 类模型（默认 m2a_det_rot_semi，旋转增强+半监督）。'
+                         '只有**不传 --det-weights** 时才用得上')
+    ap.add_argument('--det-person-weights', default=None,
+                    help='**opt-in** 人框专用腿：给定后用该模型的 person 框**替换**主检测的 person 框'
+                         '（替换、不合并），替换后按 R5 去重；hand/foot/head 不受影响。默认 None = 完全不走这段。'
+                         '实测候选 `runs/m2a_det_person_hybrid`（batch-2 R .922 / P .738 / 面积比 1.026）')
     ap.add_argument('--foot-weights', default=DEF_FOOT,
                     help='专用脚检测器（单类）。与 4 类模型**取并集**：实测它能把 4 类漏掉的 test1 脚找回来')
-    ap.add_argument('--hand-imgsz', type=int, default=None,
-                    help='只给专用**手**检测器换分辨率（默认 None = 跟随 --imgsz，不带参时行为与原来完全一致）。'
-                         '实测手 1280→1536 召回 .405→.481（P .582→.717），代价是单图多一次 1536 推理')
+    ap.add_argument('--hand-imgsz', type=int, default=1536,
+                    help='手第二遍的推理尺寸（**默认 1536 = 开**）。做法：主检测之后用同一个 4 类 det 权重在'
+                         '这个尺寸再跑一遍，**只取 hand 类并替换主检测那遍的 hand 框**（其他类不动）。'
+                         '与专用手模型（--hand-weights）互相独立。`--hand-imgsz 1280`（= --imgsz）时第二遍不跑，'
+                         '逐字节回到旧行为，是逃生门。实测手 1280→1536：`data/hand_gt` R .405→.481 / P .582→.717')
     ap.add_argument('--hand-weights', default=None,
                     help='专用**手**检测器（单类，可选）。与 4 类模型取并集；默认不传 = 关闭'
                          '（`m2a_hand_v1` 未训完，不可用；`m2a_hand_v2` 训完再按交付图实测决定）')
@@ -213,7 +261,21 @@ def main():
             print('ViTPose 不可用（%s）⇒ M1 回落 YOLO-pose/dwpose' % str(e)[:120])
     elif a.vitpose_dir:
         print('ViTPose 目录不存在（%s）⇒ M1 回落 YOLO-pose/dwpose' % a.vitpose_dir)
-    det_model = YOLO(a.det_weights) if (YOLO and os.path.exists(a.det_weights)) else None
+    # 双头混合：person/head ← 主模型（DEF_DET），hand/foot ← 第二条腿（DEF_DET_LIMB）。
+    # 显式传 --det-weights 时 hybrid 关闭（det_limb_model=None），行为回到单模型。
+    _det_w = a.det_weights or DEF_DET
+    det_model = YOLO(_det_w) if (YOLO and os.path.exists(_det_w)) else None
+    det_limb_model = None
+    if det_model is not None and a.det_weights is None:
+        _limb_w = a.det_limb_weights
+        if _limb_w and os.path.exists(_limb_w) and os.path.abspath(_limb_w) != os.path.abspath(_det_w):
+            det_limb_model = YOLO(_limb_w)
+        elif _limb_w and os.path.abspath(_limb_w) == os.path.abspath(_det_w):
+            print('注意：--det-limb-weights 与主检测权重相同，混合等价于单模型')
+    # opt-in 人框专用腿：默认 None ⇒ 不加载、下面替换逻辑跳过，默认路径逐字段不变。
+    det_person_model = None
+    if a.det_person_weights and YOLO and os.path.exists(a.det_person_weights):
+        det_person_model = YOLO(a.det_person_weights)
     m3_models = []
     if YOLO:
         for w in ([a.m3_weights] if isinstance(a.m3_weights, str) else a.m3_weights):
@@ -229,7 +291,8 @@ def main():
             gag_models.append(YOLO(_w))
     gag_model = gag_models[0] if gag_models else None
     # 坑：`train.py --task det` 会把 checkpoint 的 task 存成短名 'det'，而 predict 只认 'detect'
-    for _m in (pose_model, det_model, m3_model, foot_model, face_model, hand_model):
+    for _m in (pose_model, det_model, m3_model, foot_model, face_model, hand_model, det_limb_model,
+               det_person_model):
         if _m is not None and getattr(_m, 'task', None) == 'det':
             _m.task = 'detect'
 
@@ -275,6 +338,51 @@ def main():
                                   'prob': round(float(b.conf[0]), 3)} for b in (det_r.boxes or [])]
                 except Exception as e:
                     rec['flags'].append({'type': 'det_error', 'detail': str(e)[:80]})
+
+            # ---- 双头混合（默认路径）：hand/foot 换成第二条腿的输出，person/head 保持主模型 ----
+            # 刻意选择：**即使主模型一个 person 框都没报**，仍保留第二条腿的 hand/foot。
+            # 理由（lead 2026-10-21 口径）：宁可多框，也不要因为"没框住人"就把手脚整批丢掉；
+            # 手脚框不依赖 person 框存在（下游按各自 cls 消费），实测 g4_01_lumine_sickbed 在
+            # person=0 时保留了 6 个 hand/foot 框。
+            # 为什么不是整体替换：person 在 0° 上 rot_semi 会从 92.9% 掉到 82.1%（§0 第 3 条）；
+            # 为什么不是并集：两模型的 hand/foot 并集在实测里只多真框 0 个、多 13/15 个误报（§7 的教训）。
+            if det_model is not None and det_limb_model is not None:
+                try:
+                    rl = det_limb_model.predict(path, conf=a.conf, imgsz=a.imgsz, verbose=False)[0]
+                    _limb = []
+                    for b in (rl.boxes or []):
+                        _cls = rl.names[int(b.cls[0])]
+                        if 'hand' not in _cls and 'foot' not in _cls:
+                            continue
+                        _limb.append({'layer': 'M2a', 'cls': _cls,
+                                      'box': [round(v, 1) for v in b.xyxy[0].tolist()],
+                                      'prob': round(float(b.conf[0]), 3),
+                                      'from': 'det_limb'})
+                    det_boxes = [b for b in det_boxes if 'hand' not in b['cls'] and 'foot' not in b['cls']]
+                    det_boxes += _limb
+                    rec['chain'].append('M2a.hybrid_limb')
+                except Exception as e:
+                    rec['flags'].append({'type': 'det_limb_error', 'detail': str(e)[:80]})
+
+            # ---- opt-in person 专用腿（--det-person-weights；默认 None ⇒ 整段跳过）----
+            # 语义：person 框**只**来自该模型（替换，不与主检测合并），hand/foot/head 保持上面的现役组合。
+            # 为什么不合并：两模型 person 并集实测只多真框也成倍多误框，还会破坏 1:1 链（一框罩两人）；
+            # 为什么在 _assign 之前替换：person_id 与 M1 链都按 person 框序分配，必须让人框先定稿。
+            # 替换后按 R5 去重，压掉"两个 55% 巨框罩同一副身体"这对错位重复框。
+            if a.det_person_weights and det_person_model is not None:
+                try:
+                    rp = det_person_model.predict(path, conf=a.conf, imgsz=a.imgsz, verbose=False)[0]
+                    _ppl = [{'layer': 'M2a', 'cls': 'person',
+                             'box': [round(v, 1) for v in b.xyxy[0].tolist()],
+                             'prob': round(float(b.conf[0]), 3),
+                             'from': 'det_person'} for b in (rp.boxes or [])
+                            if rp.names[int(b.cls[0])] == 'person']
+                    _ih, _iw = float(rp.orig_shape[0]), float(rp.orig_shape[1])
+                    det_boxes = ([b for b in det_boxes if b['cls'] != 'person']
+                                 + _dedupe_person_r5(_ppl, _iw * _ih))
+                    rec['chain'].append('M2a.hybrid_person')
+                except Exception as e:
+                    rec['flags'].append({'type': 'det_person_error', 'detail': str(e)[:80]})
 
             # ---- M1 骨架 ----
             vit_pts = []
@@ -417,13 +525,33 @@ def main():
                         rec['chain'].append('M2a.foot_model')
                 except Exception as e:
                     rec['flags'].append({'type': 'foot_model_error', 'detail': str(e)[:80]})
+            # ①.5 手第二遍（`--hand-imgsz`，默认 1536）：同一个 4 类 det 权重换分辨率再跑一次，只取 hand 类，
+            #      **替换**主检测那遍的 hand 框（不是并集——实测并集的真框与第二遍完全相同却多 13/15 个误报）。
+            #      动机：手是小目标，1280 下手长边 <72px 的基本检不到（GT 上该档四口径召回全 0），1536 能补一部分。
+            #      逃生门：`--hand-imgsz` 等于 `--imgsz` 时这段不跑 ⇒ 逐字节回到旧行为。
+            #      混合模式下由第二条腿（转增强模型）负责手，否则仍是主模型换分辨率再跑一遍。
+            _hand_src = det_limb_model if det_limb_model is not None else det_model
+            if _hand_src is not None and a.hand_imgsz and a.hand_imgsz != a.imgsz:
+                try:
+                    r2 = _hand_src.predict(path, conf=a.conf, imgsz=a.hand_imgsz, verbose=False)[0]
+                    p2 = [{'layer': 'M2a', 'cls': 'hand',
+                           'box': [round(v, 1) for v in b.xyxy[0].tolist()],
+                           'prob': round(float(b.conf[0]), 3),
+                           'from': 'hand_pass2_%d' % a.hand_imgsz}
+                          for b in (r2.boxes or []) if r2.names[int(b.cls[0])] == 'hand']
+                    main_ids = {id(b) for b in hands}
+                    rec['boxes'] = [b for b in rec['boxes'] if id(b) not in main_ids]
+                    hands[:] = p2
+                    rec['chain'].append('M2a.hand_pass2')
+                except Exception as e:
+                    rec['flags'].append({'type': 'hand_pass2_error', 'detail': str(e)[:80]})
             # ② 专用**手**检测器（单类）与 4 类取并集：与脚同理 —— 手是交付图上最弱的一环
             #    （1280 下只有 4/8 张检到手、1600 下 5/8）。默认**关**（不传 `--hand-weights`），
             #    因为 `runs/m2a_hand_v1` 只训到 27/150 epoch 就被中断、不可用；等 `m2a_hand_v2` 训完按实测决定。
             if hand_model is not None:
                 try:
                     rf = hand_model.predict(path, conf=max(0.15, a.conf - 0.15),
-                                            imgsz=a.hand_imgsz or a.imgsz, verbose=False)[0]
+                                            imgsz=a.imgsz, verbose=False)[0]
                     for b in (rf.boxes or []):
                         nb = [round(v, 1) for v in b.xyxy[0].tolist()]
                         if any(_iou(nb, f['box']) > 0.5 for f in hands):
